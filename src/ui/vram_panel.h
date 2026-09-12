@@ -5,6 +5,7 @@
 #include <vector>
 #include <utility>
 #include <algorithm>
+#include <array>
 
 namespace ui {
 
@@ -16,14 +17,39 @@ public:
     void Render(tim::Document& document, VRAMManager& vram_manager);
 
 private:
+    static constexpr float kMinZoom = 0.1f;
+    static constexpr float kMaxZoom = 16.0f;
+    static constexpr float kSidebarMinWidth = 150.0f;
+    static constexpr float kSidebarMaxWidth = 500.0f;
+    // Constant blank space kept above and to the left of VRAM row/word 0
+    // inside the scroll area, so there's room to pan/zoom around the very
+    // top-left edge instead of content being pinned flush against the
+    // window's border.
+    static constexpr float kCanvasMargin = 24.0f;
+
+    float sidebar_width = 240.0f; // User-adjustable via the splitter next to it.
+
     int bpp_mode_index = 2; // Combo index: 0 = 4 BPP, 1 = 8 BPP, 2 = 16 BPP
     float zoom = 1.0f;
     bool snap_enabled = true;
     int last_vram_version = -1;
     int last_structure_version = -1;
 
+    // Common PS1 display buffer footprints, drawn as a highlighted region at
+    // VRAM origin - index 0 is "None". Mirrors what a game's frame/display
+    // buffer(s) would actually reserve, so placing a texture there is
+    // visibly a mistake instead of a silent VRAM collision.
+    struct FramebufferPreset { const char* label; int width; int height; };
+    static const FramebufferPreset kFramebufferPresets[];
+    static constexpr int kFramebufferPresetCount = 21;
+    int framebuffer_preset_index = 0;
+    bool framebuffer_double_buffered = false;
+    bool framebuffer_stack_horizontal = false;
+
     // Image selection lives on TIM_Image::selected (shared with InspectorPanel);
     // CLUT selection has no inspector equivalent, so it stays local here.
+    // The two are mutually exclusive: selecting an image clears any CLUT
+    // selection and vice versa, so exactly one "kind" is ever draggable.
     std::vector<int> selected_cluts;
     int image_selection_anchor = -1;
     int clut_selection_anchor = -1;
@@ -35,19 +61,34 @@ private:
         std::vector<std::pair<int, ImVec2>> original_origins; // index -> origin at drag start
 
         // A plain click (no Ctrl/Shift) on an already-selected item must not
-        // collapse the multi-selection right away - it might be the start of
-        // a group drag. The collapse-to-one-item only happens on release if
-        // the mouse never actually moved.
+        // change selection right away - it might be the start of a group
+        // drag. The actual click outcome (collapse to one item, or - if it
+        // was already the sole selection - deselect it entirely) only
+        // happens on release if the mouse never actually moved.
         bool pending_click_reset = false;
         int click_reset_index = -1;
+        bool click_deselect_if_sole = false;
     } drag;
 
     static VRAMViewMode IndexToViewMode(int index);
     static int TPageWidthPixelsForMode(VRAMViewMode mode);
 
     void DrawTPageGrid(ImDrawList* draw_list, ImVec2 origin, float tpage_w, float tpage_h) const;
+    void DrawFramebufferOverlay(ImDrawList* draw_list, ImVec2 canvas_origin, float words_scale) const;
     void DrawRegions(tim::Document& document, ImVec2 canvas_origin, float words_scale);
     void UpdateDrag(tim::Document& document, float words_scale);
+
+    // Persistent side panel (a normal sibling of the canvas, not an overlay
+    // drawn on top of it): VRAM coordinates under the mouse, plus a
+    // scrollable list of the selected images with small previews and a
+    // per-image palette switcher.
+    void RenderSidebar(tim::Document& document, int mouse_word_x, int mouse_line_y, bool mouse_in_vram);
+
+    // Arrow keys nudge every selected image/CLUT by one VRAM unit (Shift for
+    // a bigger 10-unit step), for pixel-precise positioning the mouse can't
+    // reliably do. Only acts while the VRAM canvas has focus and no drag is
+    // in progress.
+    void HandleKeyboardNudge(tim::Document& document);
 
     // Snaps `candidate` to the nearest value in `lines` if within
     // `max_screen_px` (converted using `scale`), otherwise returns it unchanged.

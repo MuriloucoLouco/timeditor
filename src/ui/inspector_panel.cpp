@@ -1,5 +1,6 @@
 #include "inspector_panel.h"
 #include "palette_view.h"
+#include "splitter.h"
 #include "imgui.h"
 #include "../core/vram_manager.h"
 #include "../gfx/tim_texture_builder.h"
@@ -79,11 +80,13 @@ TPageLocation ComputeTPageLocation(int origin_x_words, int origin_y) {
 } // namespace
 
 void InspectorPanel::Render(tim::Document& document) {
-    ImGui::BeginChild("List", ImVec2(240, 0), true);
+    ImGui::BeginChild("List", ImVec2(list_width, 0), true);
     RenderFileList(document);
     ImGui::EndChild();
 
-    ImGui::SameLine();
+    // Dragging the splitter right grows the list (it's the left pane).
+    list_width += ui::VerticalSplitter("InspectorSplitter");
+    list_width = std::clamp(list_width, kListMinWidth, kListMaxWidth);
 
     ImGui::BeginChild("Viewer", ImVec2(0, 0), true);
     int active = document.GetActiveIndex();
@@ -224,6 +227,17 @@ void InspectorPanel::RenderPreview(tim::Document& document, TIM_Image& tim) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "(unsaved changes)");
     }
+
+    // Saving here writes the whole file this image belongs to (that's the
+    // unit the TIM format saves in) but is scoped to whichever image you're
+    // currently inspecting, rather than requiring a trip back to the file list.
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!dirty);
+    if (ImGui::SmallButton("Save")) {
+        document.Save(tim.filename);
+    }
+    ImGui::EndDisabled();
+
     ImGui::Separator();
 
     ImGui::SeparatorText("Image");
@@ -258,44 +272,99 @@ void InspectorPanel::RenderPreview(tim::Document& document, TIM_Image& tim) {
     }
 
     ImGui::Spacing();
-
-    if (tim.has_clut && tim.clut_header.num_cluts > 1) {
-        RenderClutSelector(tim);
-        ImGui::Separator();
-    }
-
-    if (tim.has_clut) {
-        ImGui::Text("Palette:");
-        PaletteView::Draw(tim, tim.selected_clut);
-        ImGui::Separator();
-    }
-
     ImGui::SliderFloat("Zoom", &zoom_level, 1.0f, 8.0f, "%.1fx");
+    ImGui::TextDisabled("Scroll over the image to zoom.");
+    ImGui::Spacing();
+
+    // Palette gets a fixed-width column on the right; the image takes
+    // whatever space is left (a negative BeginChild size means "stretch to
+    // available minus this many pixels").
+    const float kPalettePanelWidth = 176.0f;
+    ImVec2 image_area_size = tim.has_clut ? ImVec2(-kPalettePanelWidth, 0) : ImVec2(0, 0);
+
+    // NoScrollWithMouse: the wheel drives zoom below instead of panning.
+    ImGui::BeginChild("ScrollArea", image_area_size, true,
+                       ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+    // GetCursorScreenPos()/GetScrollX() still reflect the scroll from BEFORE
+    // this frame's SetScrollX/Y call below (that only takes effect for the
+    // window's *next* layout), so canvas_p0 is computed by hand instead of
+    // re-querying ImGui after changing zoom - otherwise the image would
+    // render one frame out of place, flashing at the old position on every
+    // wheel tick.
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
+    if (ImGui::IsWindowHovered() && io.MouseWheel != 0.0f) {
+        ImVec2 scroll_before(ImGui::GetScrollX(), ImGui::GetScrollY());
+        ImVec2 window_origin(canvas_p0.x + scroll_before.x, canvas_p0.y + scroll_before.y);
+        float content_x = (io.MousePos.x - canvas_p0.x) / zoom_level;
+        float content_y = (io.MousePos.y - canvas_p0.y) / zoom_level;
+
+        zoom_level = std::clamp(zoom_level * (1.0f + io.MouseWheel * 0.1f), 1.0f, 8.0f);
+
+        canvas_p0 = ImVec2(io.MousePos.x - content_x * zoom_level, io.MousePos.y - content_y * zoom_level);
+        ImGui::SetScrollX(window_origin.x - canvas_p0.x);
+        ImGui::SetScrollY(window_origin.y - canvas_p0.y);
+    }
 
     ImVec2 tex_size(tim.real_width * zoom_level, tim.image_header.height * zoom_level);
-    ImGui::BeginChild("ScrollArea", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
     if (!tim.opengl_texture_ids.empty()) {
         uint32_t active_tex = tim.opengl_texture_ids[tim.selected_clut];
-        // Reasserted here (not just at texture creation) so nothing else in
-        // the app can leave this texture sampling as blurry/linear by mistake.
         glBindTexture(GL_TEXTURE_2D, active_tex);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+        ImGui::SetCursorScreenPos(canvas_p0);
+        // The backend's default sampler is linear and overrides the NEAREST
+        // texture parameters set above; force point-sampling for this one
+        // draw so zoomed-in pixels stay crisp instead of blurring.
+        ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        if (platform_io.DrawCallback_SetSamplerNearest) draw_list->AddCallback(platform_io.DrawCallback_SetSamplerNearest);
         ImGui::Image((void*)(intptr_t)active_tex, tex_size);
+        if (platform_io.DrawCallback_SetSamplerLinear) draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear);
     }
     ImGui::EndChild();
+
+    if (tim.has_clut) {
+        ImGui::SameLine();
+        ImGui::BeginChild("PaletteSide", ImVec2(kPalettePanelWidth, 0), true);
+        if (tim.clut_header.num_cluts > 1) {
+            RenderClutSelector(tim);
+            ImGui::Separator();
+        }
+        ImGui::Text("Palette");
+        ImGui::Separator();
+        // Size swatches to fill this fixed-width panel exactly, matching
+        // PaletteView's own column count (16 wide for 256-color CLUTs, 8
+        // otherwise), so nothing gets clipped or needs a second scrollbar.
+        int columns = (tim.clut_header.colors_per_clut >= 256) ? 16 : 8;
+        float swatch_size = (kPalettePanelWidth - 16.0f) / columns;
+        PaletteView::Draw(tim, tim.selected_clut, swatch_size);
+        ImGui::EndChild();
+    }
 }
 
 void InspectorPanel::RenderClutSelector(TIM_Image& tim) {
     ImGui::Text("Select Palette:");
+    ImGuiStyle& style = ImGui::GetStyle();
+    float window_visible_x2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+
     for (int c = 0; c < tim.clut_header.num_cluts; c++) {
-        if (c > 0 && c % 8 != 0) ImGui::SameLine();
         std::string btn_label = std::to_string(c) + "##clut" + std::to_string(c);
         bool is_selected = (tim.selected_clut == c);
 
         if (is_selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.7f, 0.4f, 1.0f));
-        if (ImGui::Button(btn_label.c_str())) tim.selected_clut = c;
+        ImGui::Button(btn_label.c_str());
+        if (ImGui::IsItemClicked()) tim.selected_clut = c;
         if (is_selected) ImGui::PopStyleColor();
+
+        // Manual wrap: keep placing buttons on the same line as long as the
+        // next one would still fit in this (comparatively narrow) side panel.
+        float next_button_x2 = ImGui::GetItemRectMax().x + style.ItemSpacing.x + ImGui::GetItemRectSize().x;
+        if (c + 1 < tim.clut_header.num_cluts && next_button_x2 < window_visible_x2) {
+            ImGui::SameLine();
+        }
     }
 }
 

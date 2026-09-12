@@ -26,7 +26,16 @@ int main(int argc, char** argv) {
     ui::EditorApp app;
     app.Initialize();
 
-    while (!glfwWindowShouldClose(window)) {
+    // Clicking the OS window's close button would otherwise quit instantly
+    // with no chance to save; intercept it and route through the same
+    // unsaved-changes check as File > Exit instead.
+    glfwSetWindowUserPointer(window, &app);
+    glfwSetWindowCloseCallback(window, [](GLFWwindow* w) {
+        glfwSetWindowShouldClose(w, GLFW_FALSE);
+        static_cast<ui::EditorApp*>(glfwGetWindowUserPointer(w))->RequestExit();
+    });
+
+    while (!glfwWindowShouldClose(window) && !app.ShouldQuit()) {
         glfwPollEvents();
 
         ImGui_ImplOpenGL3_NewFrame();

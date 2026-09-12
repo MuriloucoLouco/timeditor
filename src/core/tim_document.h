@@ -33,6 +33,18 @@ public:
     // user closed that file's tab). Returns false if no image had that path.
     bool CloseFile(const std::string& filepath);
 
+    // Undo support for VRAM origin edits (image/CLUT moves). Call
+    // PushUndoSnapshot() before starting an edit gesture (e.g. a drag);
+    // if the gesture turns out to have changed nothing, call
+    // DiscardLastUndo() instead of leaving a no-op entry on the stack.
+    // Undo() restores the most recent snapshot and returns whether it did
+    // anything. The stack is cleared whenever images are added or removed,
+    // since a snapshot's per-index layout no longer applies after that.
+    void PushUndoSnapshot();
+    void DiscardLastUndo();
+    bool Undo();
+    bool CanUndo() const { return !undo_stack.empty(); }
+
     // Bumped whenever the loaded set or any image/CLUT VRAM origin changes.
     // VRAMPanel compares this against its own last-seen value to know when
     // the emulated VRAM needs to be rebuilt from scratch.
@@ -50,11 +62,17 @@ public:
     bool SaveAs(const std::string& filepath, const std::string& new_filepath);
 
 private:
+    struct UndoSnapshot {
+        std::vector<uint16_t> image_x, image_y, clut_x, clut_y; // parallel to `images`
+        std::set<std::string> dirty_files;
+    };
+
     std::vector<TIM_Image> images;
     int active_index = -1;
     std::set<std::string> dirty_files;
     int vram_version = 0;
     int structure_version = 0;
+    std::vector<UndoSnapshot> undo_stack;
 
     std::vector<int> IndicesForFile(const std::string& filepath) const;
 };

@@ -15,7 +15,11 @@ public:
     void Render(tim::Document& document);
 
 private:
+    static constexpr float kListMinWidth = 150.0f;
+    static constexpr float kListMaxWidth = 500.0f;
+
     float zoom_level = 2.0f;
+    float list_width = 240.0f; // User-adjustable via the splitter next to it.
 
     // Set when the user asks to close a dirty file; drives the "save before
     // closing?" modal, which is opened/drawn on the next RenderFileList call.

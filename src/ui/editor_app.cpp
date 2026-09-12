@@ -4,6 +4,7 @@
 #include "../core/tim_parser.h"
 #include "../gfx/tim_texture_builder.h"
 #include "portable-file-dialogs.h"
+#include <set>
 
 namespace ui {
 
@@ -43,10 +44,62 @@ void EditorApp::SaveActiveFileAs() {
     document.SaveAs(source, dest);
 }
 
+void EditorApp::RequestExit() {
+    bool any_dirty = false;
+    for (const auto& tim : document.Images()) {
+        if (document.IsFileDirty(tim.filename)) { any_dirty = true; break; }
+    }
+
+    if (any_dirty) {
+        open_exit_confirm = true;
+    } else {
+        should_quit = true;
+    }
+}
+
+void EditorApp::RenderExitConfirmPopup() {
+    if (open_exit_confirm) {
+        ImGui::OpenPopup("Quit TIMEditor?");
+        open_exit_confirm = false;
+    }
+
+    if (ImGui::BeginPopupModal("Quit TIMEditor?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("You have unsaved changes.");
+        ImGui::Text("Save all changes before quitting?");
+        ImGui::Separator();
+
+        if (ImGui::Button("Save All & Quit")) {
+            std::set<std::string> saved;
+            for (const auto& tim : document.Images()) {
+                if (saved.insert(tim.filename).second && document.IsFileDirty(tim.filename)) {
+                    document.Save(tim.filename);
+                }
+            }
+            should_quit = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Discard & Quit")) {
+            should_quit = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
 void EditorApp::HandleShortcuts() {
     ImGuiIO& io = ImGui::GetIO();
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
         SaveActiveFile();
+    }
+    // Skip while a text field (e.g. the export dialog's path box) is
+    // focused, so this doesn't fight with that widget's own Ctrl+Z.
+    if (io.KeyCtrl && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Z)) {
+        document.Undo();
     }
 }
 
@@ -54,6 +107,7 @@ void EditorApp::RenderFrame() {
     HandleShortcuts();
     RenderMenu();
     export_dialog.Render(document);
+    RenderExitConfirmPopup();
     RenderWorkspace();
 }
 
@@ -77,7 +131,12 @@ void EditorApp::RenderMenu() {
             if (ImGui::MenuItem("Save As...", nullptr, false, has_active)) SaveActiveFileAs();
 
             ImGui::Separator();
-            if (ImGui::MenuItem("Exit")) exit(0);
+            if (ImGui::MenuItem("Exit")) RequestExit();
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Edit")) {
+            if (ImGui::MenuItem("Undo", "Ctrl+Z", false, document.CanUndo())) document.Undo();
             ImGui::EndMenu();
         }
 

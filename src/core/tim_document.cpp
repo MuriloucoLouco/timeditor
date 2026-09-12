@@ -13,6 +13,7 @@ int Document::AddImages(std::vector<TIM_Image>&& new_images) {
     }
     vram_version++;
     structure_version++;
+    undo_stack.clear(); // Snapshots are index-based; the layout just changed.
     return first_index;
 }
 
@@ -82,6 +83,51 @@ bool Document::CloseFile(const std::string& filepath) {
     dirty_files.erase(filepath);
     vram_version++;
     structure_version++;
+    undo_stack.clear(); // Snapshots are index-based; the layout just changed.
+    return true;
+}
+
+void Document::PushUndoSnapshot() {
+    UndoSnapshot snap;
+    snap.image_x.reserve(images.size());
+    snap.image_y.reserve(images.size());
+    snap.clut_x.reserve(images.size());
+    snap.clut_y.reserve(images.size());
+    for (const auto& img : images) {
+        snap.image_x.push_back(img.image_header.origin_x);
+        snap.image_y.push_back(img.image_header.origin_y);
+        snap.clut_x.push_back(img.clut_header.origin_x);
+        snap.clut_y.push_back(img.clut_header.origin_y);
+    }
+    snap.dirty_files = dirty_files;
+
+    undo_stack.push_back(std::move(snap));
+    constexpr size_t kMaxUndoDepth = 100;
+    if (undo_stack.size() > kMaxUndoDepth) undo_stack.erase(undo_stack.begin());
+}
+
+void Document::DiscardLastUndo() {
+    if (!undo_stack.empty()) undo_stack.pop_back();
+}
+
+bool Document::Undo() {
+    if (undo_stack.empty()) return false;
+    UndoSnapshot snap = std::move(undo_stack.back());
+    undo_stack.pop_back();
+
+    // The image set changed since this snapshot was taken (a load/close
+    // happened without going through Push/DiscardUndo) - it no longer
+    // lines up with `images`, so there's nothing safe to restore.
+    if (snap.image_x.size() != images.size()) return false;
+
+    for (size_t i = 0; i < images.size(); i++) {
+        images[i].image_header.origin_x = snap.image_x[i];
+        images[i].image_header.origin_y = snap.image_y[i];
+        images[i].clut_header.origin_x = snap.clut_x[i];
+        images[i].clut_header.origin_y = snap.clut_y[i];
+    }
+    dirty_files = std::move(snap.dirty_files);
+    vram_version++;
     return true;
 }
 
