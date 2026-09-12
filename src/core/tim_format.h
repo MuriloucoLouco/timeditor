@@ -3,65 +3,66 @@
 #include <vector>
 #include <string>
 
-// Cabeçalho fixo de todo arquivo/bloco TIM (assinatura + flags de formato).
+// Fixed 8-byte header at the start of every TIM block: signature + pixel/CLUT flags.
 struct TIM_Header {
-    uint32_t id;   // Sempre 0x00000010
-    uint32_t flag; // bits 0-2: modo de pixel; bit 3: possui CLUT
+    uint32_t id;   // Always 0x00000010
+    uint32_t flag; // bits 0-2: pixel mode, bit 3: has CLUT
 };
 
-// Cabeçalho da paleta (CLUT - Color Look-Up Table), presente apenas
-// quando TIM_Header::flag indica que a imagem é indexada por paleta.
+// Palette (CLUT) header, present only when TIM_Header::flag's bit 3 is set.
 struct TIM_CLUT_Header {
     uint32_t size;
-    uint16_t origin_x;       // Coordenada X na VRAM (Palette Org)
-    uint16_t origin_y;       // Coordenada Y na VRAM (Palette Org)
+    uint16_t origin_x;       // VRAM X (words) - Palette Org
+    uint16_t origin_y;       // VRAM Y (pixels) - Palette Org
     uint16_t colors_per_clut;
     uint16_t num_cluts;
 };
 
-// Cabeçalho dos dados de imagem em si.
+// Header for the raw pixel data block.
 struct TIM_Image_Header {
     uint32_t size;
-    uint16_t origin_x; // Coordenada X na VRAM (Image Org)
-    uint16_t origin_y; // Coordenada Y na VRAM (Image Org)
-    uint16_t width;    // Largura em "words" de 16 bits (não em pixels!)
+    uint16_t origin_x; // VRAM X (words) - Image Org
+    uint16_t origin_y; // VRAM Y (pixels) - Image Org
+    uint16_t width;    // In 16-bit words, not pixels
     uint16_t height;
 };
 
-// Formatos de pixel suportados pelo PS1 (campo "pmode" do TIM_Header::flag).
+// PS1 pixel formats (TIM_Header::flag & 0x07).
 enum class TIMPixelMode : uint8_t {
-    Indexed4BPP  = 0,
-    Indexed8BPP  = 1,
-    Direct16BPP  = 2,
-    Direct24BPP  = 3,
-    Mixed        = 4,
+    Indexed4BPP = 0,
+    Indexed8BPP = 1,
+    Direct16BPP = 2,
+    Direct24BPP = 3,
+    Mixed = 4,
 };
 
-// Representa uma imagem TIM já carregada e decodificada, incluindo os
-// dados prontos para virar textura (opengl_texture_ids é preenchido por
-// gfx::TIMTextureBuilder, não pelo parser).
+// A fully loaded and decoded TIM image, including data ready to become a
+// texture (opengl_texture_ids is filled by gfx::TIMTextureBuilder, not the parser).
 class TIM_Image {
 public:
     std::string filename;
-    int file_index = 0; // Índice da imagem dentro do arquivo de origem (um arquivo pode ter várias TIMs)
+    int file_index = 0; // Position of this image within its source file (a file can hold several)
 
     TIM_Header header{};
     bool has_clut = false;
-    uint8_t type = 0; // Ver TIMPixelMode
+    uint8_t type = 0; // See TIMPixelMode
 
     TIM_CLUT_Header clut_header{};
-    std::vector<uint16_t> clut_data; // BGR555, tamanho = colors_per_clut * num_cluts
+    std::vector<uint16_t> clut_data; // BGR555, size = colors_per_clut * num_cluts
 
     TIM_Image_Header image_header{};
-    std::vector<uint8_t> image_data; // Bytes crus, ainda no formato empacotado do PS1
+    std::vector<uint8_t> image_data; // Raw bytes, still in the packed PS1 layout
 
-    int real_width = 0; // Largura em pixels já convertida a partir de image_header.width
-    int bpp = 0;         // 4, 8, 16 ou 24
+    int real_width = 0; // Pixel width derived from image_header.width
+    int bpp = 0;         // 4, 8, 16 or 24
 
-    // Preenchido por gfx::TIMTextureBuilder: uma textura OpenGL por CLUT
-    // (ou uma única textura para formatos de cor direta).
+    // Filled by gfx::TIMTextureBuilder: one OpenGL texture per CLUT
+    // (or a single texture for direct-color formats).
     std::vector<uint32_t> opengl_texture_ids;
     int selected_clut = 0;
 
-    bool selected = false; // Estado de seleção na UI (usado para "desenhar na VRAM")
+    // Shared multi-select flag: the Inspector's per-file checkboxes and the
+    // VRAM Viewer's image selection (click/Ctrl/Shift) both read and write
+    // this, so selecting in one panel is reflected in the other.
+    bool selected = false;
 };

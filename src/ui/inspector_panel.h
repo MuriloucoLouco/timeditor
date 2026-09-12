@@ -1,21 +1,30 @@
 #pragma once
-#include <vector>
-#include "../core/tim_format.h"
+#include "../core/tim_document.h"
+#include <string>
 
 namespace ui {
 
-// Aba "TIM Inspector": lista lateral de arquivos carregados + preview
-// ampliado da imagem selecionada (com seletor de CLUT quando aplicável).
+// "TIM Inspector" tab: file list + zoomed preview of the selected TIM,
+// including its CLUT selector and palette swatches.
+//
+// The file list groups images by their source file: each loaded .tim is a
+// parent row (with its own checkbox to select/deselect all of its images at
+// once) and its images are shown indented underneath as children.
 class InspectorPanel {
 public:
-    void Render(std::vector<TIM_Image>& tims);
+    void Render(tim::Document& document);
 
 private:
-    int selected_index = -1;
     float zoom_level = 2.0f;
 
-    void RenderFileList(std::vector<TIM_Image>& tims);
-    void RenderPreview(TIM_Image& tim);
+    // Set when the user asks to close a dirty file; drives the "save before
+    // closing?" modal, which is opened/drawn on the next RenderFileList call.
+    std::string pending_close_file;
+    bool open_close_confirm = false;
+
+    void RenderFileList(tim::Document& document);
+    void RenderCloseConfirmPopup(tim::Document& document);
+    void RenderPreview(tim::Document& document, TIM_Image& tim);
     void RenderClutSelector(TIM_Image& tim);
 };
 

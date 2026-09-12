@@ -10,30 +10,21 @@ bool Parser::LoadFromFile(const std::string& filepath, std::vector<TIM_Image>& o
     int byte;
     int index_counter = 0;
 
-    // O arquivo é varrido byte a byte procurando pela assinatura 0x00000010
-    // (little-endian: 0x10, 0x00, 0x00, 0x00), já que múltiplas TIMs podem
-    // estar concatenadas sem nenhum índice/tabela de conteúdo.
+    // TIM files have no table of contents, so we scan byte-by-byte for the
+    // 0x00000010 signature (little-endian: 0x10, 0x00, 0x00, 0x00).
     while ((byte = fgetc(file)) != EOF) {
         if (byte != 0x10) continue;
 
         uint8_t next[3];
         if (fread(next, 1, 3, file) != 3 || next[0] != 0x00 || next[1] != 0x00 || next[2] != 0x00) {
-            // Não era a assinatura completa: volta e continua varrendo byte a byte.
-            fseek(file, -3, SEEK_CUR);
+            fseek(file, -3, SEEK_CUR); // Not a real signature, keep scanning
             continue;
         }
 
         TIM_Image img;
-        if (!ReadOneImage(file, index_counter, filepath, img)) {
-            // Erro de leitura (arquivo truncado no meio de uma imagem) — para de procurar.
-            break;
-        }
+        if (!ReadOneImage(file, index_counter, filepath, img)) break; // Truncated file
 
-        if (img.file_index == -1) {
-            // Falso-positivo da assinatura (pmode desconhecido): nada foi consumido
-            // além dos 4 bytes de flag, que já foram devolvidos ao stream.
-            continue;
-        }
+        if (img.file_index == -1) continue; // False-positive signature, nothing consumed
 
         index_counter++;
         out_images.push_back(std::move(img));
@@ -52,10 +43,10 @@ bool Parser::ReadOneImage(FILE* file, int file_index, const std::string& filepat
 
     uint32_t pmode = img.header.flag & 0x07;
     if (pmode > 4) {
-        // Modo de pixel desconhecido: provavelmente falso-positivo da assinatura.
-        // Devolve os 4 bytes da flag e deixa o loop principal continuar procurando.
+        // Unknown pixel mode: likely a false-positive signature match.
+        // Rewind the flag bytes and let the caller keep scanning.
         fseek(file, -4, SEEK_CUR);
-        img.file_index = -1; // marca como inválida para o chamador não contar como imagem
+        img.file_index = -1;
         return true;
     }
 
@@ -74,8 +65,7 @@ bool Parser::ReadOneImage(FILE* file, int file_index, const std::string& filepat
 
     if (fread(&img.image_header, sizeof(TIM_Image_Header), 1, file) != 1) return false;
 
-    // image_header.size inclui os 12 bytes do próprio cabeçalho de imagem.
-    if (img.image_header.size < 12) return false;
+    if (img.image_header.size < 12) return false; // Header size includes itself
     size_t image_data_size = img.image_header.size - 12;
 
     img.image_data.resize(image_data_size);
@@ -93,7 +83,7 @@ void Parser::ComputeBppAndRealWidth(TIM_Image& img) {
         case 1: img.bpp = 8;  img.real_width = img.image_header.width * 2; break;
         case 2: img.bpp = 16; img.real_width = img.image_header.width; break;
         case 3: img.bpp = 24; img.real_width = static_cast<int>(img.image_header.width / 1.5f); break;
-        default: img.bpp = 16; img.real_width = img.image_header.width; break; // "Mixed" tratado como fallback
+        default: img.bpp = 16; img.real_width = img.image_header.width; break; // "Mixed" fallback
     }
 }
 

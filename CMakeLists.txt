@@ -8,6 +8,7 @@ find_package(glfw3 REQUIRED)
 
 set(IMGUI_DIR third_party/imgui)
 set(PFD_DIR third_party/portable-file-dialogs)
+set(STB_DIR third_party/stb)
 
 file(GLOB IMGUI_SOURCES
     ${IMGUI_DIR}/*.cpp
@@ -20,17 +21,23 @@ include_directories(
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
     ${PFD_DIR}
+    ${STB_DIR}
 )
 
 add_executable(TIMEditor
     src/main.cpp
     src/core/tim_parser.cpp
+    src/core/tim_document.cpp
+    src/core/tim_writer.cpp
     src/core/vram_manager.cpp
     src/gfx/tim_texture_builder.cpp
+    src/gfx/image_exporter.cpp
     src/ui/theme.cpp
     src/ui/inspector_panel.cpp
     src/ui/vram_panel.cpp
     src/ui/editor_app.cpp
+    src/ui/palette_view.cpp
+    src/ui/export_dialog.cpp
     ${IMGUI_SOURCES}
 )
 

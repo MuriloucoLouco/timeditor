@@ -9,7 +9,7 @@ inline void WriteBGR555AsRGBA(uint16_t color, std::vector<uint8_t>& rgba, int pi
     rgba[pixel_idx + 0] = (color & 0x1F) << 3;
     rgba[pixel_idx + 1] = ((color >> 5) & 0x1F) << 3;
     rgba[pixel_idx + 2] = ((color >> 10) & 0x1F) << 3;
-    rgba[pixel_idx + 3] = (color == 0) ? 0 : 255; // Cor 0x0000 é transparente por convenção do PS1
+    rgba[pixel_idx + 3] = (color == 0) ? 0 : 255; // Color 0x0000 is transparent by PS1 convention
 }
 
 } // namespace
@@ -28,10 +28,16 @@ void TIMTextureBuilder::BuildTextures(TIM_Image& tim) {
                      GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        // CLAMP_TO_EDGE evita "sangramento" de pixels da outra ponta da
-        // textura quando o zoom cai numa borda não-inteira.
+        // CLAMP_TO_EDGE avoids edge bleeding when the zoom lands on a non-integer scale.
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+}
+
+void TIMTextureBuilder::DeleteTextures(TIM_Image& tim) {
+    if (!tim.opengl_texture_ids.empty()) {
+        glDeleteTextures(static_cast<GLsizei>(tim.opengl_texture_ids.size()), tim.opengl_texture_ids.data());
+        tim.opengl_texture_ids.clear();
     }
 }
 
@@ -74,7 +80,7 @@ std::vector<uint8_t> TIMTextureBuilder::DecodeToRGBA(const TIM_Image& tim, int c
                 rgba[pixel_idx + 3] = 255;
                 x++;
             } else {
-                break; // Formato desconhecido: aborta essa página para não corromper o buffer
+                break; // Unknown format, stop to avoid corrupting the buffer
             }
         }
     }

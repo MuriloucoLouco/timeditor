@@ -1,16 +1,15 @@
 #pragma once
-#include <vector>
 #include <string>
-#include "../core/tim_format.h"
+#include "../core/tim_document.h"
 #include "../core/vram_manager.h"
 #include "inspector_panel.h"
 #include "vram_panel.h"
+#include "export_dialog.h"
 
 namespace ui {
 
-// Ponto central da aplicação: dono dos dados (TIMs carregadas + VRAM) e
-// responsável pelo menu principal. A renderização de cada aba é delegada
-// aos painéis (InspectorPanel / VRAMPanel).
+// Owns the document (loaded TIMs) and VRAM state, handles the main menu,
+// and delegates tab rendering to InspectorPanel/VRAMPanel.
 class EditorApp {
 public:
     EditorApp() = default;
@@ -20,13 +19,17 @@ public:
     void LoadFile(const std::string& path);
 
 private:
-    std::vector<TIM_Image> loaded_tims;
+    tim::Document document;
     VRAMManager vram_manager;
     InspectorPanel inspector_panel;
     VRAMPanel vram_panel;
+    ExportDialog export_dialog;
 
     void RenderMenu();
     void RenderWorkspace();
+    void HandleShortcuts();
+    void SaveActiveFile();
+    void SaveActiveFileAs();
 };
 
 } // namespace ui

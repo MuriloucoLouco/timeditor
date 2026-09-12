@@ -2,8 +2,7 @@
 
 namespace ui {
 
-// Aplica a paleta de cores e o arredondamento customizados do editor
-// sobre o tema padrão do Dear ImGui.
+// Applies the editor's custom color palette and rounding over ImGui's default dark theme.
 void ApplyDarkTheme();
 
 } // namespace ui

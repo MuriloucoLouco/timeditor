@@ -3,20 +3,19 @@
 #include <vector>
 #include <cstdint>
 
-// Modo usado só para *interpretar a exibição* do conteúdo da VRAM — o
-// conteúdo real em vram_buffer nunca muda, apenas a forma como cada word de
-// 16 bits é decodificada para a textura de visualização.
+// Display-only interpretation of VRAM content. The underlying data never
+// changes; this only controls how each 16-bit word is decoded for viewing.
 enum class VRAMViewMode : uint8_t {
-    Indexed4BPP, // Cada word vira 4 pixels (nibbles), mostrados em escala de cinza
-    Indexed8BPP, // Cada word vira 2 pixels (bytes), mostrados em escala de cinza
-    Direct16BPP, // Cada word é 1 pixel BGR555 (modo de cor direta nativo do PS1)
+    Indexed4BPP, // Each word -> 4 grayscale pixels (nibbles)
+    Indexed8BPP, // Each word -> 2 grayscale pixels (bytes)
+    Direct16BPP, // Each word -> 1 BGR555 pixel (native direct-color mode)
 };
 
-// Emula os 1024x512 pixels de 16 bits da VRAM do PS1 e mantém uma textura
-// OpenGL espelhando seu conteúdo para visualização.
+// Emulates the PS1's 1024x512, 16-bit VRAM and keeps an OpenGL texture
+// mirroring its content for display.
 class VRAMManager {
 public:
-    static constexpr int kWidth = 1024; // Largura da VRAM em "words" de 16 bits
+    static constexpr int kWidth = 1024; // VRAM width in 16-bit words
     static constexpr int kHeight = 512;
 
     VRAMManager();
@@ -24,26 +23,26 @@ public:
 
     void InitializeGL();
 
-    // Escreve a CLUT (se houver) e os pixels de uma TIM na VRAM, respeitando
-    // as coordenadas Image Org / Palette Org do próprio arquivo, e atualiza
-    // a textura de visualização.
-    void WriteTIMToVRAM(const TIM_Image& tim);
+    // Clears the emulated VRAM and re-writes every image's CLUT/pixels at its
+    // current Image/Palette Org, then refreshes the display texture. Doing a
+    // full rebuild (instead of writing just the moved image) is what keeps a
+    // moved image from leaving a stale copy behind at its old position.
+    void RebuildFromImages(const std::vector<TIM_Image>& images);
 
-    // Troca o modo de interpretação da textura de visualização e a
-    // regenera imediatamente (não mexe no conteúdo real da VRAM).
+    // Switches the display interpretation and regenerates the texture.
     void SetViewMode(VRAMViewMode mode);
     VRAMViewMode GetViewMode() const { return view_mode; }
 
-    // Dimensões reais, em pixels, da textura de visualização no modo atual
-    // (ex.: 4096x512 em Indexed4BPP, 2048x512 em Indexed8BPP, 1024x512 em Direct16BPP).
+    // Real pixel size of the display texture in the current mode
+    // (e.g. 4096x512 for Indexed4BPP, 1024x512 for Direct16BPP).
     int GetViewWidth() const;
     int GetViewHeight() const { return kHeight; }
 
     uint32_t GetVRAMTextureID() const { return vram_gl_texture; }
 
 private:
-    std::vector<uint16_t> vram_buffer;       // Conteúdo real da VRAM (BGR555, sempre 1024x512 words)
-    std::vector<uint8_t> rgb_texture_buffer; // Buffer RGBA8 recalculado a cada troca de modo/conteúdo
+    std::vector<uint16_t> vram_buffer;       // Actual VRAM content (BGR555, always 1024x512 words)
+    std::vector<uint8_t> rgb_texture_buffer; // RGBA8 buffer, rebuilt on content/mode change
     uint32_t vram_gl_texture;
     VRAMViewMode view_mode = VRAMViewMode::Direct16BPP;
 
