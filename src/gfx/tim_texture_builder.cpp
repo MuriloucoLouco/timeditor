@@ -28,6 +28,10 @@ void TIMTextureBuilder::BuildTextures(TIM_Image& tim) {
                      GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        // CLAMP_TO_EDGE evita "sangramento" de pixels da outra ponta da
+        // textura quando o zoom cai numa borda não-inteira.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
 }
 

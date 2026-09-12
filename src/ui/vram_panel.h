@@ -11,10 +11,11 @@ public:
     void Render(VRAMManager& vram_manager);
 
 private:
-    int bpp_mode = 2; // 0: 4 BPP, 1: 8 BPP, 2: 16 BPP
+    int bpp_mode_index = 2; // Índice: 0 = 4 BPP, 1 = 8 BPP, 2 = 16 BPP
     float zoom = 1.0f;
 
-    int BppMultiplier() const;
+    static VRAMViewMode IndexToViewMode(int index);
+    static int TPageWidthPixelsForMode(VRAMViewMode mode);
     void DrawTPageGrid(ImDrawList* draw_list, ImVec2 origin, float tpage_w, float tpage_h) const;
 };
 

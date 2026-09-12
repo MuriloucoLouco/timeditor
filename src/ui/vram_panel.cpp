@@ -4,11 +4,22 @@
 
 namespace ui {
 
-int VRAMPanel::BppMultiplier() const {
-    switch (bpp_mode) {
-        case 0: return 4; // 4 BPP
-        case 1: return 2; // 8 BPP
-        default: return 1; // 16 BPP
+VRAMViewMode VRAMPanel::IndexToViewMode(int index) {
+    switch (index) {
+        case 0: return VRAMViewMode::Indexed4BPP;
+        case 1: return VRAMViewMode::Indexed8BPP;
+        default: return VRAMViewMode::Direct16BPP;
+    }
+}
+
+int VRAMPanel::TPageWidthPixelsForMode(VRAMViewMode mode) {
+    // Uma tpage do PS1 sempre ocupa 64 "words" de VRAM; em pixels isso
+    // equivale a 256px (4 BPP), 128px (8 BPP) ou 64px (16 BPP).
+    switch (mode) {
+        case VRAMViewMode::Indexed4BPP: return 256;
+        case VRAMViewMode::Indexed8BPP: return 128;
+        case VRAMViewMode::Direct16BPP:
+        default: return 64;
     }
 }
 
@@ -18,15 +29,19 @@ void VRAMPanel::Render(VRAMManager& vram_manager) {
 
     const char* bpp_modes[] = { "4 BPP", "8 BPP", "16 BPP" };
     ImGui::SetNextItemWidth(150.0f);
-    ImGui::Combo("VRAM BPP Mode", &bpp_mode, bpp_modes, 3);
+    ImGui::Combo("VRAM BPP Mode", &bpp_mode_index, bpp_modes, 3);
     ImGui::SameLine();
     ImGui::SliderFloat("VRAM Zoom", &zoom, 0.5f, 4.0f, "%.1fx");
     ImGui::Separator();
 
-    int bpp_multiplier = BppMultiplier();
-    float base_width = static_cast<float>(VRAMManager::kWidth) * bpp_multiplier;
-    float base_height = static_cast<float>(VRAMManager::kHeight);
-    ImVec2 canvas_size(base_width * zoom, base_height * zoom);
+    // Antes, o modo só mudava o tamanho do canvas e esticava a mesma
+    // textura de 1024x512 em 16 BPP — agora ele manda a VRAMManager
+    // reinterpretar e regenerar a textura de fato (uma textura maior e
+    // "achatada" em 4/8 BPP, com cada índice cru mostrado em cinza).
+    VRAMViewMode mode = IndexToViewMode(bpp_mode_index);
+    vram_manager.SetViewMode(mode); // Não faz nada se o modo já for o mesmo
+
+    ImVec2 canvas_size(vram_manager.GetViewWidth() * zoom, vram_manager.GetViewHeight() * zoom);
 
     ImGui::BeginChild("VRAMScroll", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
 
@@ -42,7 +57,7 @@ void VRAMPanel::Render(VRAMManager& vram_manager) {
 
     ImGui::Image((void*)(intptr_t)vram_tex, canvas_size);
 
-    float tpage_w = 64.0f * bpp_multiplier * zoom;
+    float tpage_w = TPageWidthPixelsForMode(mode) * zoom;
     float tpage_h = 256.0f * zoom;
     DrawTPageGrid(draw_list, canvas_p0, tpage_w, tpage_h);
 

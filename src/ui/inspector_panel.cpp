@@ -1,8 +1,37 @@
 #include "inspector_panel.h"
 #include "imgui.h"
+#include "../core/vram_manager.h"
+#include <GL/gl.h>
 #include <string>
 
 namespace ui {
+
+namespace {
+
+struct TPageLocation {
+    int tpage_id;
+    int local_x_words; // 0-63: posição dentro da tpage, em words
+    int local_y;        // 0-255: posição dentro da tpage, em pixels
+};
+
+// Traduz a coordenada de VRAM de uma imagem (Image Org, armazenada em
+// "words" no eixo X e pixels no eixo Y, como o próprio formato TIM guarda)
+// para o índice da tpage do PS1 e a posição relativa dentro dela.
+TPageLocation ComputeTPageLocation(int origin_x_words, int origin_y) {
+    constexpr int kTPageWidthWords = 64;
+    constexpr int kTPageHeight = 256;
+    constexpr int kTPagesPerRow = VRAMManager::kWidth / kTPageWidthWords; // 16
+
+    TPageLocation loc;
+    int col = origin_x_words / kTPageWidthWords;
+    int row = origin_y / kTPageHeight;
+    loc.tpage_id = row * kTPagesPerRow + col;
+    loc.local_x_words = origin_x_words % kTPageWidthWords;
+    loc.local_y = origin_y % kTPageHeight;
+    return loc;
+}
+
+} // namespace
 
 void InspectorPanel::Render(std::vector<TIM_Image>& tims) {
     ImGui::BeginChild("List", ImVec2(240, 0), true);
@@ -66,10 +95,23 @@ void InspectorPanel::RenderPreview(TIM_Image& tim) {
         ImGui::TableSetColumnIndex(0); ImGui::Text("Depth");
         ImGui::TableSetColumnIndex(1); ImGui::Text("%d BPP", tim.bpp);
 
+        TPageLocation img_loc = ComputeTPageLocation(tim.image_header.origin_x, tim.image_header.origin_y);
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0); ImGui::Text("VRAM Position (Image)");
+        ImGui::TableSetColumnIndex(1); ImGui::Text("x=%d words, y=%d px", tim.image_header.origin_x, tim.image_header.origin_y);
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0); ImGui::Text("TPage");
+        ImGui::TableSetColumnIndex(1); ImGui::Text("#%d (local %d, %d)", img_loc.tpage_id, img_loc.local_x_words, img_loc.local_y);
+
         if (tim.has_clut) {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0); ImGui::Text("Palettes (CLUTs)");
             ImGui::TableSetColumnIndex(1); ImGui::Text("%d Found", tim.clut_header.num_cluts);
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0); ImGui::Text("VRAM Position (CLUT)");
+            ImGui::TableSetColumnIndex(1); ImGui::Text("x=%d, y=%d px", tim.clut_header.origin_x, tim.clut_header.origin_y);
         }
         ImGui::EndTable();
     }
@@ -87,6 +129,14 @@ void InspectorPanel::RenderPreview(TIM_Image& tim) {
     ImGui::BeginChild("ScrollArea", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
     if (!tim.opengl_texture_ids.empty()) {
         uint32_t active_tex = tim.opengl_texture_ids[tim.selected_clut];
+        // Reforça o sampler nearest bem no momento do desenho: a textura já
+        // é criada com esse filtro (ver TIMTextureBuilder), mas garantir de
+        // novo aqui custa nada e evita qualquer imagem borrada por
+        // interpolação caso o estado do sampler seja alterado em outro
+        // lugar do app entre a criação da textura e este frame.
+        glBindTexture(GL_TEXTURE_2D, active_tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         ImGui::Image((void*)(intptr_t)active_tex, tex_size);
     }
     ImGui::EndChild();

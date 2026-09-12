@@ -7,7 +7,7 @@
 int main(int argc, char** argv) {
     if (!glfwInit()) return -1;
 
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "TIM Editor", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(1280, 720, "Editor TIM PS1", NULL, NULL);
     if (!window) {
         glfwTerminate();
         return -1;
