@@ -7,7 +7,6 @@ find_package(OpenGL REQUIRED)
 find_package(glfw3 REQUIRED)
 
 set(IMGUI_DIR third_party/imgui)
-set(PFD_DIR third_party/portable-file-dialogs)
 set(STB_DIR third_party/stb)
 
 file(GLOB IMGUI_SOURCES
@@ -20,9 +19,10 @@ include_directories(
     src
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
-    ${PFD_DIR}
     ${STB_DIR}
 )
+
+add_subdirectory(third_party/nfd)
 
 add_executable(TIMEditor
     src/main.cpp
@@ -41,7 +41,8 @@ add_executable(TIMEditor
     src/ui/export_dialog.cpp
     src/ui/import_image_dialog.cpp
     src/ui/image_editor_panel.cpp
+    src/ui/file_dialog.cpp
     ${IMGUI_SOURCES}
 )
 
-target_link_libraries(TIMEditor PRIVATE glfw OpenGL::GL)
+target_link_libraries(TIMEditor PRIVATE glfw OpenGL::GL nfd)
