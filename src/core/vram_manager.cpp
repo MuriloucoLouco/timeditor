@@ -7,6 +7,14 @@ VRAMManager::VRAMManager() {
     vram_gl_texture = 0;
 }
 
+TPageLocation VRAMManager::ComputeTPageLocation(int x_words, int y) {
+    TPageLocation loc;
+    loc.tpage_id = (y / kTPageHeight) * kTPagesPerRow + (x_words / kTPageWidthWords);
+    loc.local_x_words = x_words % kTPageWidthWords;
+    loc.local_y = y % kTPageHeight;
+    return loc;
+}
+
 VRAMManager::~VRAMManager() {}
 
 void VRAMManager::InitializeGL() {

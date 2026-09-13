@@ -1,5 +1,6 @@
 #include "vram_panel.h"
 #include "splitter.h"
+#include "gl_image.h"
 #include <GL/gl.h>
 #include <cstdio>
 #include <cmath>
@@ -183,8 +184,25 @@ void VRAMPanel::Render(tim::Document& document, VRAMManager& vram_manager) {
         canvas_size = ImVec2(vram_manager.GetViewWidth() * zoom, vram_manager.GetViewHeight() * zoom);
 
         canvas_p0 = ImVec2(io.MousePos.x - content_x * words_scale, io.MousePos.y - content_y * zoom);
-        ImGui::SetScrollX(window_origin.x - canvas_p0.x);
-        ImGui::SetScrollY(window_origin.y - canvas_p0.y);
+
+        // Clamp to the same [0, content - avail] bound ImGui's own Begin()
+        // will apply on the *next* frame (using ContentSize, which the
+        // canvas image below stakes out at kCanvasMargin + canvas_size).
+        // Skipping this let the requested scroll go out of range (e.g.
+        // panning past the top-left while zooming out), so next frame
+        // ImGui silently re-clamped it after we'd already drawn one frame
+        // at the unclamped position - a one-frame snap/flicker right at
+        // that edge.
+        ImVec2 content_size(kCanvasMargin + canvas_size.x, kCanvasMargin + canvas_size.y);
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        float scroll_max_x = std::max(0.0f, content_size.x - avail.x);
+        float scroll_max_y = std::max(0.0f, content_size.y - avail.y);
+        float new_scroll_x = std::clamp(window_origin.x - canvas_p0.x, 0.0f, scroll_max_x);
+        float new_scroll_y = std::clamp(window_origin.y - canvas_p0.y, 0.0f, scroll_max_y);
+        canvas_p0 = ImVec2(window_origin.x - new_scroll_x, window_origin.y - new_scroll_y);
+
+        ImGui::SetScrollX(new_scroll_x);
+        ImGui::SetScrollY(new_scroll_y);
     }
 
     ImVec2 canvas_p1 = ImVec2(canvas_p0.x + canvas_size.x, canvas_p0.y + canvas_size.y);
@@ -192,18 +210,8 @@ void VRAMPanel::Render(tim::Document& document, VRAMManager& vram_manager) {
     draw_list->AddRectFilled(canvas_p0, canvas_p1, IM_COL32(0, 0, 0, 255));
 
     uint32_t vram_tex = vram_manager.GetVRAMTextureID();
-    glBindTexture(GL_TEXTURE_2D, vram_tex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
     ImGui::SetCursorScreenPos(canvas_p0);
-    // The backend's default sampler is linear and overrides the NEAREST
-    // texture parameters above; force point-sampling for this one draw so
-    // zoomed-in VRAM pixels stay sharp instead of blurring.
-    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
-    if (platform_io.DrawCallback_SetSamplerNearest) draw_list->AddCallback(platform_io.DrawCallback_SetSamplerNearest);
-    ImGui::Image((void*)(intptr_t)vram_tex, canvas_size);
-    if (platform_io.DrawCallback_SetSamplerLinear) draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear);
+    ImagePixelPerfect(vram_tex, canvas_size);
 
     DrawFramebufferOverlay(draw_list, canvas_p0, words_scale);
 
@@ -740,9 +748,9 @@ void VRAMPanel::RenderSidebar(tim::Document& document, int mouse_word_x, int mou
     // Always exactly two lines here, valid or not, so the separator and
     // everything below never shift as the mouse moves in and out of VRAM.
     if (mouse_in_vram) {
-        int tpage_id = (mouse_line_y / 256) * 16 + (mouse_word_x / 64);
+        TPageLocation loc = VRAMManager::ComputeTPageLocation(mouse_word_x, mouse_line_y);
         ImGui::Text("Cursor: x=%d words, y=%d px", mouse_word_x, mouse_line_y);
-        ImGui::Text("TPage #%d (local %d, %d)", tpage_id, mouse_word_x % 64, mouse_line_y % 256);
+        ImGui::Text("TPage #%d (local %d, %d)", loc.tpage_id, loc.local_x_words, loc.local_y);
     } else {
         ImGui::TextDisabled("Cursor: outside VRAM");
         ImGui::TextDisabled("TPage: -");
@@ -753,10 +761,6 @@ void VRAMPanel::RenderSidebar(tim::Document& document, int mouse_word_x, int mou
     ImGui::Separator();
 
     ImGui::BeginChild("VRAMSidebarSelList", ImVec2(0, 0), false);
-    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
-    if (!selected.empty() && platform_io.DrawCallback_SetSamplerNearest) {
-        ImGui::GetWindowDrawList()->AddCallback(platform_io.DrawCallback_SetSamplerNearest);
-    }
 
     for (int idx : selected) {
         TIM_Image& tim = images[idx];
@@ -774,10 +778,7 @@ void VRAMPanel::RenderSidebar(tim::Document& document, int mouse_word_x, int mou
         ImVec2 thumb_size(kThumbHeight * aspect, kThumbHeight);
         if (!tim.opengl_texture_ids.empty()) {
             uint32_t tex = tim.opengl_texture_ids[tim.selected_clut];
-            glBindTexture(GL_TEXTURE_2D, tex);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            ImGui::Image((void*)(intptr_t)tex, thumb_size);
+            ImagePixelPerfect(tex, thumb_size);
         } else {
             ImGui::Dummy(thumb_size); // Keep row height identical even with no texture yet.
         }
@@ -800,9 +801,6 @@ void VRAMPanel::RenderSidebar(tim::Document& document, int mouse_word_x, int mou
         ImGui::PopID();
     }
 
-    if (!selected.empty() && platform_io.DrawCallback_SetSamplerLinear) {
-        ImGui::GetWindowDrawList()->AddCallback(platform_io.DrawCallback_SetSamplerLinear);
-    }
     ImGui::EndChild();
 
     ImGui::EndChild();

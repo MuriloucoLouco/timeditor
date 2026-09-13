@@ -1,7 +1,7 @@
 #include "export_dialog.h"
 #include "imgui.h"
 #include "../gfx/image_exporter.h"
-#include "portable-file-dialogs.h"
+#include "file_dialog.h"
 #include <cstring>
 #include <set>
 
@@ -70,12 +70,10 @@ void ExportDialog::Render(tim::Document& document) {
     ImGui::InputText("##outdir", output_dir, sizeof(output_dir));
     ImGui::SameLine();
     if (ImGui::Button("Browse...")) {
-        if (pfd::settings::available()) {
-            std::string dir = pfd::select_folder("Choose export folder", output_dir).result();
-            if (!dir.empty()) {
-                std::strncpy(output_dir, dir.c_str(), sizeof(output_dir) - 1);
-                output_dir[sizeof(output_dir) - 1] = '\0';
-            }
+        std::string dir = FileDialog::PickFolder("Choose export folder", output_dir);
+        if (!dir.empty()) {
+            std::strncpy(output_dir, dir.c_str(), sizeof(output_dir) - 1);
+            output_dir[sizeof(output_dir) - 1] = '\0';
         }
     }
     ImGui::SameLine();

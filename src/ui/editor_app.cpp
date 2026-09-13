@@ -3,7 +3,7 @@
 #include "imgui.h"
 #include "../core/tim_parser.h"
 #include "../gfx/tim_texture_builder.h"
-#include "portable-file-dialogs.h"
+#include "file_dialog.h"
 #include <set>
 
 namespace ui {
@@ -42,10 +42,10 @@ void EditorApp::SaveActiveFile() {
 
 void EditorApp::SaveActiveFileAs() {
     int idx = document.GetActiveIndex();
-    if (idx < 0 || !pfd::settings::available()) return;
+    if (idx < 0) return;
 
     std::string source = document.Images()[idx].filename;
-    std::string dest = pfd::save_file("Save TIM as", source, { "TIM Files (.tim)", "*.tim" }).result();
+    std::string dest = FileDialog::SaveFile("Save TIM as", { { "TIM Files", "tim" } }, source);
     if (dest.empty()) return;
 
     document.SaveAs(source, dest);
@@ -132,13 +132,9 @@ void EditorApp::RenderMenu() {
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Open TIM...")) {
-                if (pfd::settings::available()) {
-                    auto selection = pfd::open_file("Select TIM files", ".",
-                                                     { "TIM Files (.tim)", "*.tim", "All Files", "*" },
-                                                     pfd::opt::multiselect).result();
-                    for (const auto& path : selection) {
-                        LoadFile(path);
-                    }
+                auto selection = FileDialog::OpenFiles("Select TIM files", { { "TIM Files", "tim" } });
+                for (const auto& path : selection) {
+                    LoadFile(path);
                 }
             }
             ImGui::Separator();

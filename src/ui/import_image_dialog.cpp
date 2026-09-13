@@ -2,7 +2,7 @@
 #include "imgui.h"
 #include "../gfx/image_quantizer.h"
 #include "../gfx/tim_texture_builder.h"
-#include "portable-file-dialogs.h"
+#include "file_dialog.h"
 #include <GL/gl.h>
 #include <algorithm>
 
@@ -32,20 +32,18 @@ void ImportImageDialog::Open(int index) {
 }
 
 void ImportImageDialog::PickSourceFile() {
-    if (!pfd::settings::available()) return;
-    auto result = pfd::open_file("Choose an image to import", ".",
-                                  { "Image Files", "*.png *.jpg *.jpeg *.bmp *.tga *.gif", "All Files", "*" })
-                      .result();
-    if (result.empty()) return;
+    std::string path = FileDialog::OpenFile("Choose an image to import",
+                                             { { "Image Files", "png,jpg,jpeg,bmp,tga,gif" } });
+    if (path.empty()) return;
 
     int w = 0, h = 0, channels = 0;
-    unsigned char* pixels = stbi_load(result[0].c_str(), &w, &h, &channels, 4);
+    unsigned char* pixels = stbi_load(path.c_str(), &w, &h, &channels, 4);
     if (!pixels) {
         status_message = "Failed to load that image.";
         return;
     }
 
-    source_path = result[0];
+    source_path = path;
     source_width = w;
     source_height = h;
     source_rgba.assign(pixels, pixels + static_cast<size_t>(w) * h * 4);

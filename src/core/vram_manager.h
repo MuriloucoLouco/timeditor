@@ -11,12 +11,28 @@ enum class VRAMViewMode : uint8_t {
     Direct16BPP, // Each word -> 1 BGR555 pixel (native direct-color mode)
 };
 
+// A VRAM coordinate expressed as a PS1 tpage index plus the position inside
+// that tpage, as produced by VRAMManager::ComputeTPageLocation.
+struct TPageLocation {
+    int tpage_id;
+    int local_x_words; // 0-63 within the tpage
+    int local_y;        // 0-255 within the tpage
+};
+
 // Emulates the PS1's 1024x512, 16-bit VRAM and keeps an OpenGL texture
 // mirroring its content for display.
 class VRAMManager {
 public:
     static constexpr int kWidth = 1024; // VRAM width in 16-bit words
     static constexpr int kHeight = 512;
+    static constexpr int kTPageWidthWords = 64;
+    static constexpr int kTPageHeight = 256;
+    static constexpr int kTPagesPerRow = kWidth / kTPageWidthWords; // 16
+
+    // Converts a VRAM coordinate (words on X, lines/pixels on Y) into a PS1
+    // tpage index and the position inside it. Shared by the Inspector (Image
+    // Org / Palette Org) and the VRAM Viewer (mouse cursor).
+    static TPageLocation ComputeTPageLocation(int x_words, int y);
 
     VRAMManager();
     ~VRAMManager();

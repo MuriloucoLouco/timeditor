@@ -1,6 +1,8 @@
 #include "inspector_panel.h"
 #include "palette_view.h"
 #include "splitter.h"
+#include "gl_image.h"
+#include "zoom_pan.h"
 #include "imgui.h"
 #include "../core/vram_manager.h"
 #include "../gfx/tim_texture_builder.h"
@@ -55,26 +57,6 @@ void PropertyRow(const char* label, const std::string& value) {
     ImGui::TextDisabled("%s", label);
     ImGui::TableSetColumnIndex(1);
     ImGui::TextUnformatted(value.c_str());
-}
-
-struct TPageLocation {
-    int tpage_id;
-    int local_x_words; // 0-63 within the tpage
-    int local_y;        // 0-255 within the tpage
-};
-
-// Converts an Image Org VRAM coordinate (words on X, pixels on Y, as stored
-// by the TIM format) into a PS1 tpage index and the position inside it.
-TPageLocation ComputeTPageLocation(int origin_x_words, int origin_y) {
-    constexpr int kTPageWidthWords = 64;
-    constexpr int kTPageHeight = 256;
-    constexpr int kTPagesPerRow = VRAMManager::kWidth / kTPageWidthWords; // 16
-
-    TPageLocation loc;
-    loc.tpage_id = (origin_y / kTPageHeight) * kTPagesPerRow + (origin_x_words / kTPageWidthWords);
-    loc.local_x_words = origin_x_words % kTPageWidthWords;
-    loc.local_y = origin_y % kTPageHeight;
-    return loc;
 }
 
 } // namespace
@@ -339,11 +321,6 @@ void InspectorPanel::RenderFileOverview(tim::Document& document, const std::stri
     ImGui::BeginChild("FileOverviewGrid", ImVec2(0, 0), false);
 
     const float kThumbSize = 64.0f;
-    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
-    if (platform_io.DrawCallback_SetSamplerNearest) {
-        ImGui::GetWindowDrawList()->AddCallback(platform_io.DrawCallback_SetSamplerNearest);
-    }
-
     float window_visible_x2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
     for (int idx : indices) {
         TIM_Image& t = tims[idx];
@@ -353,15 +330,12 @@ void InspectorPanel::RenderFileOverview(tim::Document& document, const std::stri
         bool clicked_thumb = false;
         if (!t.opengl_texture_ids.empty()) {
             uint32_t tex = t.opengl_texture_ids[t.selected_clut];
-            glBindTexture(GL_TEXTURE_2D, tex);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             float aspect = t.image_header.height > 0
                 ? static_cast<float>(t.real_width) / static_cast<float>(t.image_header.height)
                 : 1.0f;
             ImVec2 size = aspect >= 1.0f ? ImVec2(kThumbSize, kThumbSize / aspect)
                                           : ImVec2(kThumbSize * aspect, kThumbSize);
-            clicked_thumb = ImGui::ImageButton("##thumb", (void*)(intptr_t)tex, size);
+            clicked_thumb = ImageButtonPixelPerfect("##thumb", tex, size);
         } else {
             clicked_thumb = ImGui::Button("##thumb", ImVec2(kThumbSize, kThumbSize));
         }
@@ -377,9 +351,6 @@ void InspectorPanel::RenderFileOverview(tim::Document& document, const std::stri
         if (idx != indices.back() && next_x2 < window_visible_x2) ImGui::SameLine();
     }
 
-    if (platform_io.DrawCallback_SetSamplerLinear) {
-        ImGui::GetWindowDrawList()->AddCallback(platform_io.DrawCallback_SetSamplerLinear);
-    }
     ImGui::EndChild();
 }
 
@@ -423,7 +394,7 @@ void InspectorPanel::RenderPreview(tim::Document& document, TIM_Image& tim) {
         PropertyRow("Dimensions", Fmt("%d x %d px", tim.real_width, tim.image_header.height));
         PropertyRow("Depth", Fmt("%d BPP", tim.bpp));
 
-        TPageLocation img_loc = ComputeTPageLocation(tim.image_header.origin_x, tim.image_header.origin_y);
+        TPageLocation img_loc = VRAMManager::ComputeTPageLocation(tim.image_header.origin_x, tim.image_header.origin_y);
         PropertyRow("VRAM Origin", Fmt("x = %d words, y = %d px", tim.image_header.origin_x, tim.image_header.origin_y));
         PropertyRow("TPage", Fmt("#%d  (local x = %d, y = %d)", img_loc.tpage_id, img_loc.local_x_words, img_loc.local_y));
 
@@ -466,43 +437,14 @@ void InspectorPanel::RenderPreview(tim::Document& document, TIM_Image& tim) {
     ImGui::BeginChild("ScrollArea", image_area_size, true,
                        ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-    // GetCursorScreenPos()/GetScrollX() still reflect the scroll from BEFORE
-    // this frame's SetScrollX/Y call below (that only takes effect for the
-    // window's *next* layout), so canvas_p0 is computed by hand instead of
-    // re-querying ImGui after changing zoom - otherwise the image would
-    // render one frame out of place, flashing at the old position on every
-    // wheel tick.
-    ImGuiIO& io = ImGui::GetIO();
-    ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
-    if (ImGui::IsWindowHovered() && io.MouseWheel != 0.0f) {
-        ImVec2 scroll_before(ImGui::GetScrollX(), ImGui::GetScrollY());
-        ImVec2 window_origin(canvas_p0.x + scroll_before.x, canvas_p0.y + scroll_before.y);
-        float content_x = (io.MousePos.x - canvas_p0.x) / zoom_level;
-        float content_y = (io.MousePos.y - canvas_p0.y) / zoom_level;
+    ImVec2 content_units((float)tim.real_width, (float)tim.image_header.height);
+    ImVec2 canvas_p0 = ZoomToCursor(zoom_level, 1.0f, 8.0f, content_units, [](float z) { return ImVec2(z, z); });
 
-        zoom_level = std::clamp(zoom_level * (1.0f + io.MouseWheel * 0.1f), 1.0f, 8.0f);
-
-        canvas_p0 = ImVec2(io.MousePos.x - content_x * zoom_level, io.MousePos.y - content_y * zoom_level);
-        ImGui::SetScrollX(window_origin.x - canvas_p0.x);
-        ImGui::SetScrollY(window_origin.y - canvas_p0.y);
-    }
-
-    ImVec2 tex_size(tim.real_width * zoom_level, tim.image_header.height * zoom_level);
+    ImVec2 tex_size(content_units.x * zoom_level, content_units.y * zoom_level);
     if (!tim.opengl_texture_ids.empty()) {
         uint32_t active_tex = tim.opengl_texture_ids[tim.selected_clut];
-        glBindTexture(GL_TEXTURE_2D, active_tex);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
         ImGui::SetCursorScreenPos(canvas_p0);
-        // The backend's default sampler is linear and overrides the NEAREST
-        // texture parameters set above; force point-sampling for this one
-        // draw so zoomed-in pixels stay crisp instead of blurring.
-        ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
-        ImDrawList* draw_list = ImGui::GetWindowDrawList();
-        if (platform_io.DrawCallback_SetSamplerNearest) draw_list->AddCallback(platform_io.DrawCallback_SetSamplerNearest);
-        ImGui::Image((void*)(intptr_t)active_tex, tex_size);
-        if (platform_io.DrawCallback_SetSamplerLinear) draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear);
+        ImagePixelPerfect(active_tex, tex_size);
     }
     ImGui::EndChild();
 

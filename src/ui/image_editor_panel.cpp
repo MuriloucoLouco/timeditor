@@ -2,6 +2,8 @@
 #include "../core/vram_manager.h"
 #include "../gfx/image_quantizer.h"
 #include "../gfx/tim_texture_builder.h"
+#include "gl_image.h"
+#include "zoom_pan.h"
 #include <GL/gl.h>
 #include <algorithm>
 #include <cmath>
@@ -353,22 +355,10 @@ void ImageEditorPanel::RenderCanvas(tim::Document& document, TIM_Image& tim) {
                        ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
     ImGuiIO& io = ImGui::GetIO();
-    ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
-    bool hovered = ImGui::IsWindowHovered();
-    if (hovered && io.MouseWheel != 0.0f) {
-        ImVec2 scroll_before(ImGui::GetScrollX(), ImGui::GetScrollY());
-        ImVec2 window_origin(canvas_p0.x + scroll_before.x, canvas_p0.y + scroll_before.y);
-        float content_x = (io.MousePos.x - canvas_p0.x) / canvas_zoom;
-        float content_y = (io.MousePos.y - canvas_p0.y) / canvas_zoom;
-
-        canvas_zoom = std::clamp(canvas_zoom * (1.0f + io.MouseWheel * 0.1f), 1.0f, 32.0f);
-
-        canvas_p0 = ImVec2(io.MousePos.x - content_x * canvas_zoom, io.MousePos.y - content_y * canvas_zoom);
-        ImGui::SetScrollX(window_origin.x - canvas_p0.x);
-        ImGui::SetScrollY(window_origin.y - canvas_p0.y);
-    }
-
     int w = tim.master_width, h = tim.image_header.height;
+    ImVec2 canvas_p0 = ZoomToCursor(canvas_zoom, 1.0f, 32.0f, ImVec2((float)w, (float)h),
+                                     [](float z) { return ImVec2(z, z); });
+
     ImVec2 canvas_size(w * canvas_zoom, h * canvas_zoom);
     ImVec2 canvas_p1(canvas_p0.x + canvas_size.x, canvas_p0.y + canvas_size.y);
 
@@ -377,15 +367,8 @@ void ImageEditorPanel::RenderCanvas(tim::Document& document, TIM_Image& tim) {
 
     if (!tim.opengl_texture_ids.empty()) {
         uint32_t tex = tim.opengl_texture_ids[tim.selected_clut];
-        glBindTexture(GL_TEXTURE_2D, tex);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
         ImGui::SetCursorScreenPos(canvas_p0);
-        ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
-        if (platform_io.DrawCallback_SetSamplerNearest) draw_list->AddCallback(platform_io.DrawCallback_SetSamplerNearest);
-        ImGui::Image((void*)(intptr_t)tex, canvas_size);
-        if (platform_io.DrawCallback_SetSamplerLinear) draw_list->AddCallback(platform_io.DrawCallback_SetSamplerLinear);
+        ImagePixelPerfect(tex, canvas_size);
     }
 
     ImGui::SetCursorScreenPos(canvas_p0);

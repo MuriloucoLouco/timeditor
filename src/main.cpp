@@ -2,10 +2,12 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
+#include "nfd.h"
 #include "ui/editor_app.h"
 
 int main(int argc, char** argv) {
     if (!glfwInit()) return -1;
+    NFD_Init();
 
     GLFWwindow* window = glfwCreateWindow(1280, 720, "Editor TIM PS1", NULL, NULL);
     if (!window) {
@@ -74,6 +76,7 @@ int main(int argc, char** argv) {
     ImGui::DestroyContext();
     glfwDestroyWindow(window);
     glfwTerminate();
+    NFD_Quit();
 
     return 0;
 }
