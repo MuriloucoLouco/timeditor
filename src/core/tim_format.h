@@ -65,4 +65,29 @@ public:
     // VRAM Viewer's image selection (click/Ctrl/Shift) both read and write
     // this, so selecting in one panel is reflected in the other.
     bool selected = false;
+
+    // True if this specific image (its own origin, pixels, or CLUT) has
+    // unsaved changes. Document::IsFileDirty(filepath) is just "does any
+    // image in this file have dirty=true" - this is the one place that
+    // actually gets set/cleared, so the two can never disagree.
+    bool dirty = false;
+
+    // --- Image Editor state ---
+    //
+    // "Highest quality" master copy: RGBA8888, master_width x
+    // image_header.height. Every BPP conversion (image_data/clut_data) is
+    // re-derived from this, so repeatedly switching color depths never
+    // compounds quality loss - only master_rgba itself is ever painted on
+    // directly. Empty until gfx::TIMTextureBuilder::EnsureMasterImage has
+    // bootstrapped it (lazily, the first time this image is opened in the
+    // Image Editor) or ImportImageDialog has replaced it outright.
+    std::vector<uint8_t> master_rgba;
+    int master_width = 0;
+
+    // Parallel to master_rgba (one entry per master pixel): which palette
+    // index currently produced that pixel's color. Only meaningful while
+    // bpp is 4 or 8 (indexed); populated whenever master_rgba is
+    // quantized into image_data/clut_data. Lets editing one palette color
+    // repaint every master pixel using that index without a full requantize.
+    std::vector<uint8_t> master_index_map;
 };

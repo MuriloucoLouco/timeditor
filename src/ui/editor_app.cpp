@@ -14,6 +14,13 @@ void EditorApp::Initialize() {
 }
 
 void EditorApp::LoadFile(const std::string& path) {
+    // Already open - skip re-loading it as a duplicate set of images (this
+    // matters more now that files can also arrive via drag-and-drop or
+    // command-line args, where accidentally listing the same path twice is easy).
+    for (const auto& existing : document.Images()) {
+        if (existing.filename == path) return;
+    }
+
     std::vector<TIM_Image> new_tims;
     if (!tim::Parser::LoadFromFile(path, new_tims)) return;
 
@@ -99,7 +106,17 @@ void EditorApp::HandleShortcuts() {
     // Skip while a text field (e.g. the export dialog's path box) is
     // focused, so this doesn't fight with that widget's own Ctrl+Z.
     if (io.KeyCtrl && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Z)) {
-        document.Undo();
+        PerformUndo();
+    }
+}
+
+void EditorApp::PerformUndo() {
+    int rebuild_index = -1;
+    if (document.Undo(rebuild_index) && rebuild_index >= 0) {
+        // A content edit (paint/BPP switch/resize/import) was undone -
+        // dimensions or CLUT count may have changed, so its GL textures
+        // need rebuilding (a move/delete undo never touches those).
+        gfx::TIMTextureBuilder::RebuildTextures(document.Images()[rebuild_index]);
     }
 }
 
@@ -136,7 +153,7 @@ void EditorApp::RenderMenu() {
         }
 
         if (ImGui::BeginMenu("Edit")) {
-            if (ImGui::MenuItem("Undo", "Ctrl+Z", false, document.CanUndo())) document.Undo();
+            if (ImGui::MenuItem("Undo", "Ctrl+Z", false, document.CanUndo())) PerformUndo();
             ImGui::EndMenu();
         }
 
@@ -171,10 +188,23 @@ void EditorApp::RenderWorkspace() {
             inspector_panel.Render(document);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("VRAM Viewer")) {
+
+        // The Inspector's "Go to VRAM" buttons (just rendered above, if
+        // clicked this frame) request selecting and focusing an image/CLUT
+        // in the VRAM Viewer and force-switching to that tab to show it.
+        int focus_index;
+        bool focus_is_clut;
+        if (inspector_panel.ConsumePendingVramFocus(focus_index, focus_is_clut)) {
+            vram_panel.FocusOn(document, focus_index, focus_is_clut);
+            switch_to_vram_tab = true;
+        }
+
+        ImGuiTabItemFlags vram_tab_flags = switch_to_vram_tab ? ImGuiTabItemFlags_SetSelected : 0;
+        if (ImGui::BeginTabItem("VRAM Viewer", nullptr, vram_tab_flags)) {
             vram_panel.Render(document, vram_manager);
             ImGui::EndTabItem();
         }
+        switch_to_vram_tab = false;
         ImGui::EndTabBar();
     }
 

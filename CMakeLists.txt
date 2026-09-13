@@ -32,12 +32,15 @@ add_executable(TIMEditor
     src/core/vram_manager.cpp
     src/gfx/tim_texture_builder.cpp
     src/gfx/image_exporter.cpp
+    src/gfx/image_quantizer.cpp
     src/ui/theme.cpp
     src/ui/inspector_panel.cpp
     src/ui/vram_panel.cpp
     src/ui/editor_app.cpp
     src/ui/palette_view.cpp
     src/ui/export_dialog.cpp
+    src/ui/import_image_dialog.cpp
+    src/ui/image_editor_panel.cpp
     ${IMGUI_SOURCES}
 )
 

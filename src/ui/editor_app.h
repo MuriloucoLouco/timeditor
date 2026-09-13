@@ -32,6 +32,7 @@ private:
     ExportDialog export_dialog;
     bool should_quit = false;
     bool open_exit_confirm = false;
+    bool switch_to_vram_tab = false;
 
     void RenderMenu();
     void RenderWorkspace();
@@ -39,6 +40,7 @@ private:
     void HandleShortcuts();
     void SaveActiveFile();
     void SaveActiveFileAs();
+    void PerformUndo();
 };
 
 } // namespace ui

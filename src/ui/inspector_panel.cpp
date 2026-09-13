@@ -79,7 +79,23 @@ TPageLocation ComputeTPageLocation(int origin_x_words, int origin_y) {
 
 } // namespace
 
+bool InspectorPanel::ConsumePendingVramFocus(int& index, bool& is_clut) {
+    if (!pending_vram_focus.pending) return false;
+    index = pending_vram_focus.index;
+    is_clut = pending_vram_focus.is_clut;
+    pending_vram_focus.pending = false;
+    return true;
+}
+
 void InspectorPanel::Render(tim::Document& document) {
+    // A deletion evicted by a newer one (or by loading/closing a file) still
+    // held its GL textures alive in case of undo; once it's truly gone,
+    // release them here so they don't leak.
+    TIM_Image discarded;
+    if (document.TakeDiscardedDelete(discarded)) {
+        gfx::TIMTextureBuilder::DeleteTextures(discarded);
+    }
+
     ImGui::BeginChild("List", ImVec2(list_width, 0), true);
     RenderFileList(document);
     ImGui::EndChild();
@@ -89,13 +105,31 @@ void InspectorPanel::Render(tim::Document& document) {
     list_width = std::clamp(list_width, kListMinWidth, kListMaxWidth);
 
     ImGui::BeginChild("Viewer", ImVec2(0, 0), true);
+
     int active = document.GetActiveIndex();
-    auto& tims = document.Images();
-    if (active >= 0 && active < static_cast<int>(tims.size())) {
-        RenderPreview(document, tims[active]);
-    } else {
-        ImGui::TextDisabled("No TIM file selected.");
+    if (view_mode == ViewMode::Image && (active < 0 || active >= static_cast<int>(document.Images().size()))) {
+        view_mode = ViewMode::Empty; // e.g. this image was just deleted
     }
+
+    if (view_mode == ViewMode::FileOverview) {
+        RenderFileOverview(document, overview_file);
+    } else if (view_mode == ViewMode::Image) {
+        TIM_Image& tim = document.Images()[active];
+        if (ImGui::BeginTabBar("ImageViewTabs")) {
+            if (ImGui::BeginTabItem("Info")) {
+                RenderPreview(document, tim);
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Image Editor")) {
+                image_editor.Render(document, active);
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+    } else {
+        ImGui::TextDisabled("Select a file or image from the list.");
+    }
+
     ImGui::EndChild();
 }
 
@@ -144,7 +178,14 @@ void InspectorPanel::RenderFileList(tim::Document& document) {
 
         std::string header = filename + (dirty ? " *" : "") +
                               "  (" + std::to_string(indices.size()) + (indices.size() == 1 ? " image)" : " images)");
-        bool node_open = ImGui::TreeNodeEx("##group_node", ImGuiTreeNodeFlags_DefaultOpen, "%s", header.c_str());
+        // OpenOnArrow: clicking the label itself (below) opens the file
+        // overview instead of just expanding/collapsing the children.
+        bool node_open = ImGui::TreeNodeEx("##group_node", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow,
+                                            "%s", header.c_str());
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+            view_mode = ViewMode::FileOverview;
+            overview_file = filepath;
+        }
 
         ImGui::SameLine();
         ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 26.0f);
@@ -165,9 +206,11 @@ void InspectorPanel::RenderFileList(tim::Document& document) {
                 ImGui::Checkbox(chk_id.c_str(), &img.selected);
                 ImGui::SameLine();
 
-                std::string label = Fmt("[%d BPP] Image #%d", img.bpp, img.file_index) + "##sel_" + std::to_string(idx);
+                std::string label = Fmt("[%d BPP] Image #%d", img.bpp, img.file_index) + (img.dirty ? " *" : "") +
+                                     "##sel_" + std::to_string(idx);
                 if (ImGui::Selectable(label.c_str(), document.GetActiveIndex() == idx)) {
                     document.SetActiveIndex(idx);
+                    view_mode = ViewMode::Image;
                 }
             }
             ImGui::Unindent();
@@ -178,6 +221,7 @@ void InspectorPanel::RenderFileList(tim::Document& document) {
     }
 
     if (!close_now.empty()) {
+        if (view_mode == ViewMode::FileOverview && overview_file == close_now) view_mode = ViewMode::Empty;
         ReleaseTexturesForFile(document, close_now);
         document.CloseFile(close_now);
     }
@@ -201,6 +245,7 @@ void InspectorPanel::RenderCloseConfirmPopup(tim::Document& document) {
             document.Save(pending_close_file);
             ReleaseTexturesForFile(document, pending_close_file);
             document.CloseFile(pending_close_file);
+            if (view_mode == ViewMode::FileOverview && overview_file == pending_close_file) view_mode = ViewMode::Empty;
             pending_close_file.clear();
             ImGui::CloseCurrentPopup();
         }
@@ -208,6 +253,7 @@ void InspectorPanel::RenderCloseConfirmPopup(tim::Document& document) {
         if (ImGui::Button("Discard")) {
             ReleaseTexturesForFile(document, pending_close_file);
             document.CloseFile(pending_close_file);
+            if (view_mode == ViewMode::FileOverview && overview_file == pending_close_file) view_mode = ViewMode::Empty;
             pending_close_file.clear();
             ImGui::CloseCurrentPopup();
         }
@@ -220,23 +266,151 @@ void InspectorPanel::RenderCloseConfirmPopup(tim::Document& document) {
     }
 }
 
-void InspectorPanel::RenderPreview(tim::Document& document, TIM_Image& tim) {
-    bool dirty = document.IsFileDirty(tim.filename);
-    ImGui::TextUnformatted(tim.filename.c_str());
+void InspectorPanel::RenderFileOverview(tim::Document& document, const std::string& filepath) {
+    auto& tims = document.Images();
+    std::vector<int> indices;
+    for (int i = 0; i < static_cast<int>(tims.size()); i++) {
+        if (tims[i].filename == filepath) indices.push_back(i);
+    }
+
+    std::string filename = filepath.substr(filepath.find_last_of("/\\") + 1);
+    bool dirty = document.IsFileDirty(filepath);
+
+    ImGui::TextUnformatted(filepath.c_str());
     if (dirty) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "(unsaved changes)");
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!dirty);
+    if (ImGui::SmallButton("Save")) document.Save(filepath);
+    ImGui::EndDisabled();
+    ImGui::Separator();
+
+    if (indices.empty()) {
+        ImGui::TextDisabled("This file has no images left (closed or all deleted?).");
+        return;
+    }
+
+    int bpp_seen[4] = { 0, 0, 0, 0 }; // 4, 8, 16, 24
+    int total_colors = 0;
+    for (int idx : indices) {
+        TIM_Image& t = tims[idx];
+        if (t.bpp == 4) bpp_seen[0]++;
+        else if (t.bpp == 8) bpp_seen[1]++;
+        else if (t.bpp == 16) bpp_seen[2]++;
+        else if (t.bpp == 24) bpp_seen[3]++;
+        if (t.has_clut) total_colors += t.clut_header.colors_per_clut * t.clut_header.num_cluts;
+    }
+
+    if (ImGui::BeginTable("FileStats", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                            ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 180.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+        PropertyRow("Images", Fmt("%d", static_cast<int>(indices.size())));
+
+        std::string bpp_summary;
+        const int bpp_values[4] = { 4, 8, 16, 24 };
+        for (int i = 0; i < 4; i++) {
+            if (bpp_seen[i] == 0) continue;
+            if (!bpp_summary.empty()) bpp_summary += ", ";
+            bpp_summary += Fmt("%d BPP x%d", bpp_values[i], bpp_seen[i]);
+        }
+        PropertyRow("Depths in use", bpp_summary.empty() ? "-" : bpp_summary);
+        PropertyRow("Total palette colors", Fmt("%d", total_colors));
+
+        ImGui::EndTable();
+    }
+
+    ImGui::Spacing();
+    if (ImGui::Button("+ Add New Image")) {
+        int new_idx = document.AddBlankImage(filepath);
+        if (new_idx >= 0) {
+            gfx::TIMTextureBuilder::BuildTextures(document.Images()[new_idx]);
+            document.SetActiveIndex(new_idx);
+            view_mode = ViewMode::Image;
+            return; // Jump straight into it; the grid below is now stale anyway.
+        }
+    }
+    ImGui::Separator();
+
+    ImGui::Text("Images:");
+    ImGui::BeginChild("FileOverviewGrid", ImVec2(0, 0), false);
+
+    const float kThumbSize = 64.0f;
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    if (platform_io.DrawCallback_SetSamplerNearest) {
+        ImGui::GetWindowDrawList()->AddCallback(platform_io.DrawCallback_SetSamplerNearest);
+    }
+
+    float window_visible_x2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    for (int idx : indices) {
+        TIM_Image& t = tims[idx];
+        ImGui::PushID(idx);
+        ImGui::BeginGroup();
+
+        bool clicked_thumb = false;
+        if (!t.opengl_texture_ids.empty()) {
+            uint32_t tex = t.opengl_texture_ids[t.selected_clut];
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            float aspect = t.image_header.height > 0
+                ? static_cast<float>(t.real_width) / static_cast<float>(t.image_header.height)
+                : 1.0f;
+            ImVec2 size = aspect >= 1.0f ? ImVec2(kThumbSize, kThumbSize / aspect)
+                                          : ImVec2(kThumbSize * aspect, kThumbSize);
+            clicked_thumb = ImGui::ImageButton("##thumb", (void*)(intptr_t)tex, size);
+        } else {
+            clicked_thumb = ImGui::Button("##thumb", ImVec2(kThumbSize, kThumbSize));
+        }
+        if (clicked_thumb) {
+            document.SetActiveIndex(idx);
+            view_mode = ViewMode::Image;
+        }
+        ImGui::Text("Image #%d%s", t.file_index, t.dirty ? " *" : "");
+        ImGui::EndGroup();
+        ImGui::PopID();
+
+        float next_x2 = ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + kThumbSize;
+        if (idx != indices.back() && next_x2 < window_visible_x2) ImGui::SameLine();
+    }
+
+    if (platform_io.DrawCallback_SetSamplerLinear) {
+        ImGui::GetWindowDrawList()->AddCallback(platform_io.DrawCallback_SetSamplerLinear);
+    }
+    ImGui::EndChild();
+}
+
+void InspectorPanel::RenderPreview(tim::Document& document, TIM_Image& tim) {
+    // Shown here: whether THIS image specifically was edited (its own
+    // origin/pixels/CLUT) - a file can hold several images, and this should
+    // only light up for the one you're actually looking at.
+    ImGui::TextUnformatted(tim.filename.c_str());
+    if (tim.dirty) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "(unsaved changes)");
     }
 
     // Saving here writes the whole file this image belongs to (that's the
     // unit the TIM format saves in) but is scoped to whichever image you're
-    // currently inspecting, rather than requiring a trip back to the file list.
+    // currently inspecting, rather than requiring a trip back to the file list -
+    // so it stays enabled whenever ANY image in the file needs saving, not
+    // just this one.
+    bool file_dirty = document.IsFileDirty(tim.filename);
     ImGui::SameLine();
-    ImGui::BeginDisabled(!dirty);
+    ImGui::BeginDisabled(!file_dirty);
     if (ImGui::SmallButton("Save")) {
         document.Save(tim.filename);
     }
     ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Delete Image (Ctrl+Z to undo)")) {
+        document.DeleteImage(document.GetActiveIndex());
+        return; // `tim` may now be a dangling reference into a shifted vector.
+    }
 
     ImGui::Separator();
 
@@ -255,6 +429,9 @@ void InspectorPanel::RenderPreview(tim::Document& document, TIM_Image& tim) {
 
         ImGui::EndTable();
     }
+    if (ImGui::SmallButton("Go to VRAM (Image)##goto_img")) {
+        pending_vram_focus = { true, document.GetActiveIndex(), false };
+    }
 
     if (tim.has_clut) {
         ImGui::SeparatorText("Palette");
@@ -268,6 +445,9 @@ void InspectorPanel::RenderPreview(tim::Document& document, TIM_Image& tim) {
             PropertyRow("VRAM Origin", Fmt("x = %d words, y = %d px", tim.clut_header.origin_x, tim.clut_header.origin_y));
 
             ImGui::EndTable();
+        }
+        if (ImGui::SmallButton("Go to VRAM (Palette)##goto_clut")) {
+            pending_vram_focus = { true, document.GetActiveIndex(), true };
         }
     }
 

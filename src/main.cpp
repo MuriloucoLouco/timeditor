@@ -26,6 +26,12 @@ int main(int argc, char** argv) {
     ui::EditorApp app;
     app.Initialize();
 
+    // Command-line args (e.g. several .tim files selected in a file manager
+    // and opened with this app at once) load right at startup.
+    for (int i = 1; i < argc; i++) {
+        app.LoadFile(argv[i]);
+    }
+
     // Clicking the OS window's close button would otherwise quit instantly
     // with no chance to save; intercept it and route through the same
     // unsaved-changes check as File > Exit instead.
@@ -33,6 +39,14 @@ int main(int argc, char** argv) {
     glfwSetWindowCloseCallback(window, [](GLFWwindow* w) {
         glfwSetWindowShouldClose(w, GLFW_FALSE);
         static_cast<ui::EditorApp*>(glfwGetWindowUserPointer(w))->RequestExit();
+    });
+
+    // Dragging one or more .tim files onto the window loads all of them.
+    glfwSetDropCallback(window, [](GLFWwindow* w, int count, const char** paths) {
+        ui::EditorApp* app_ptr = static_cast<ui::EditorApp*>(glfwGetWindowUserPointer(w));
+        for (int i = 0; i < count; i++) {
+            app_ptr->LoadFile(paths[i]);
+        }
     });
 
     while (!glfwWindowShouldClose(window) && !app.ShouldQuit()) {

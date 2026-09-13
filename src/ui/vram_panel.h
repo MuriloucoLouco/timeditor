@@ -16,6 +16,13 @@ class VRAMPanel {
 public:
     void Render(tim::Document& document, VRAMManager& vram_manager);
 
+    // Selects the given image (is_clut=false) or CLUT (is_clut=true) - same
+    // effect as clicking it here, including the image/CLUT mutual exclusion
+    // - and requests that the next Render() zoom in and scroll so it's
+    // centered. Used by the Inspector's "Go to VRAM" buttons. Does not
+    // itself switch to the VRAM Viewer tab; the caller (EditorApp) handles that.
+    void FocusOn(tim::Document& document, int index, bool is_clut);
+
 private:
     static constexpr float kMinZoom = 0.1f;
     static constexpr float kMaxZoom = 16.0f;
@@ -28,6 +35,9 @@ private:
     static constexpr float kCanvasMargin = 24.0f;
 
     float sidebar_width = 240.0f; // User-adjustable via the splitter next to it.
+
+    bool pending_focus = false;
+    int focus_x = 0, focus_y = 0, focus_w = 0, focus_h = 0;
 
     int bpp_mode_index = 2; // Combo index: 0 = 4 BPP, 1 = 8 BPP, 2 = 16 BPP
     float zoom = 1.0f;

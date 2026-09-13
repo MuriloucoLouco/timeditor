@@ -41,6 +41,11 @@ void TIMTextureBuilder::DeleteTextures(TIM_Image& tim) {
     }
 }
 
+void TIMTextureBuilder::RebuildTextures(TIM_Image& tim) {
+    DeleteTextures(tim);
+    BuildTextures(tim);
+}
+
 std::vector<uint8_t> TIMTextureBuilder::DecodeToRGBA(const TIM_Image& tim, int clut_index) {
     std::vector<uint8_t> rgba(static_cast<size_t>(tim.real_width) * tim.image_header.height * 4, 0);
     size_t data_idx = 0;
@@ -86,6 +91,39 @@ std::vector<uint8_t> TIMTextureBuilder::DecodeToRGBA(const TIM_Image& tim, int c
     }
 
     return rgba;
+}
+
+void TIMTextureBuilder::EnsureMasterImage(TIM_Image& tim) {
+    if (!tim.master_rgba.empty()) return;
+
+    int h = tim.image_header.height;
+    tim.master_width = tim.real_width;
+    tim.master_rgba = DecodeToRGBA(tim, tim.selected_clut);
+
+    tim.master_index_map.clear();
+    if (tim.bpp != 4 && tim.bpp != 8) return;
+
+    tim.master_index_map.assign(static_cast<size_t>(tim.real_width) * h, 0);
+    size_t data_idx = 0;
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < tim.real_width; ) {
+            if (data_idx >= tim.image_data.size()) break;
+            size_t p = static_cast<size_t>(y) * tim.real_width + x;
+
+            if (tim.bpp == 4) {
+                uint8_t byte = tim.image_data[data_idx++];
+                tim.master_index_map[p] = byte & 0x0F;
+                x++;
+                if (x < tim.real_width) {
+                    tim.master_index_map[p + 1] = (byte >> 4) & 0x0F;
+                    x++;
+                }
+            } else {
+                tim.master_index_map[p] = tim.image_data[data_idx++];
+                x++;
+            }
+        }
+    }
 }
 
 } // namespace gfx

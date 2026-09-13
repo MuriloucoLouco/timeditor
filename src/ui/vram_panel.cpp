@@ -47,6 +47,47 @@ int VRAMPanel::TPageWidthPixelsForMode(VRAMViewMode mode) {
     }
 }
 
+void VRAMPanel::FocusOn(tim::Document& document, int index, bool is_clut) {
+    auto& images = document.Images();
+    if (index < 0 || index >= static_cast<int>(images.size())) return;
+    TIM_Image& tim = images[index];
+
+    int origin_x, origin_y, width, height;
+    if (is_clut) {
+        if (!tim.has_clut) return;
+        for (auto& img : images) img.selected = false; // Images/CLUTs are never selected together.
+        image_selection_anchor = -1;
+        selected_cluts.assign(1, index);
+        clut_selection_anchor = index;
+        // DrawRegions draws (and hit-tests) whichever image is "active" on
+        // top of everything else - without this, a click here could still
+        // land on a different, overlapping CLUT that belongs to whatever
+        // was active before, even though this one visibly shows selected.
+        document.SetActiveIndex(index);
+        origin_x = tim.clut_header.origin_x;
+        origin_y = tim.clut_header.origin_y;
+        width = tim.clut_header.colors_per_clut;
+        height = tim.clut_header.num_cluts;
+    } else {
+        selected_cluts.clear();
+        clut_selection_anchor = -1;
+        for (auto& img : images) img.selected = false;
+        tim.selected = true;
+        image_selection_anchor = index;
+        document.SetActiveIndex(index);
+        origin_x = tim.image_header.origin_x;
+        origin_y = tim.image_header.origin_y;
+        width = tim.image_header.width;
+        height = tim.image_header.height;
+    }
+
+    pending_focus = true;
+    focus_x = origin_x;
+    focus_y = origin_y;
+    focus_w = std::max(width, 1);
+    focus_h = std::max(height, 1);
+}
+
 void VRAMPanel::Render(tim::Document& document, VRAMManager& vram_manager) {
     ImGui::Text("VRAM reflects the PS1 Image Org and Palette Org addresses.");
     ImGui::TextDisabled("Click to select (click again to deselect), Ctrl/Shift to multi-select, drag to move.");
@@ -106,6 +147,19 @@ void VRAMPanel::Render(tim::Document& document, VRAMManager& vram_manager) {
     // Negative width reserves the (user-resizable) sidebar drawn after this child.
     ImGui::BeginChild("VRAMScroll", ImVec2(-sidebar_width, 0), true,
                        ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+    if (pending_focus) {
+        zoom = std::clamp(6.0f, kMinZoom, kMaxZoom);
+        words_scale = (static_cast<float>(vram_manager.GetViewWidth()) / VRAMManager::kWidth) * zoom;
+        canvas_size = ImVec2(vram_manager.GetViewWidth() * zoom, vram_manager.GetViewHeight() * zoom);
+
+        ImVec2 target_center(kCanvasMargin + (focus_x + focus_w / 2.0f) * words_scale,
+                              kCanvasMargin + (focus_y + focus_h / 2.0f) * zoom);
+        ImVec2 viewport = ImGui::GetWindowSize();
+        ImGui::SetScrollX(std::max(0.0f, target_center.x - viewport.x / 2.0f));
+        ImGui::SetScrollY(std::max(0.0f, target_center.y - viewport.y / 2.0f));
+        pending_focus = false;
+    }
 
     // GetCursorScreenPos()/GetScrollX() still reflect the scroll from BEFORE
     // this frame's SetScrollX/Y call below (that only takes effect for the
@@ -287,33 +341,30 @@ void VRAMPanel::DrawRegions(tim::Document& document, ImVec2 canvas_origin, float
         return false;
     };
 
-    // Draw (and hit-test) order: the active image - and by extension its
-    // CLUT - goes last, so it renders on top and wins ties when several
-    // regions overlap. "Active" already tracks whichever image was most
-    // recently selected here or in the Inspector.
-    std::vector<int> draw_order(n);
-    for (int i = 0; i < n; i++) draw_order[i] = i;
     int active = document.GetActiveIndex();
+
+    // --- Pass 1: input. When two widgets overlap, ImGui resolves hover to
+    // whichever was SUBMITTED FIRST this frame (the first candidate claims
+    // g.HoveredId; anything else at the same spot is refused unless it
+    // opts into AllowOverlap) - so the active image/CLUT must be submitted
+    // first here for a click to reliably land on it instead of on some
+    // other region that happens to sit underneath it. This is the opposite
+    // order from pass 2's painting below, so it's a separate pass rather
+    // than the same loop.
+    std::vector<int> input_order(n);
+    for (int i = 0; i < n; i++) input_order[i] = i;
     if (active >= 0 && active < n) {
-        auto it = std::find(draw_order.begin(), draw_order.end(), active);
-        if (it != draw_order.end()) {
-            draw_order.erase(it);
-            draw_order.push_back(active);
+        auto it = std::find(input_order.begin(), input_order.end(), active);
+        if (it != input_order.end()) {
+            input_order.erase(it);
+            input_order.insert(input_order.begin(), active);
         }
     }
 
-    // When several regions occupy the exact same rect, only the first one
-    // gets its border drawn - otherwise identical borders stack and read as
-    // one abnormally thick line. The active region is always force-drawn
-    // (on top, last) regardless, so its highlight is never hidden by an
-    // earlier duplicate.
-    std::vector<std::array<int, 4>> drawn_image_borders, drawn_clut_borders;
-
-    for (int i : draw_order) {
+    for (int i : input_order) {
         TIM_Image& tim = images[i];
-        bool is_active = (i == active);
 
-        // --- Image bounds ---
+        // --- Image input ---
         {
             ImVec2 p0 = img_p0[i], p1 = img_p1[i];
 
@@ -367,36 +418,9 @@ void VRAMPanel::DrawRegions(tim::Document& document, ImVec2 canvas_origin, float
                 }
             }
 
-            // Green highlights this image: bright when it's directly
-            // selected, dim when it isn't but its CLUT is (so you can see
-            // which image a selected palette belongs to). Both are an actual
-            // fill, not just a border color, so the highlight reads clearly.
-            bool clut_selected_here = tim.has_clut &&
-                std::find(selected_cluts.begin(), selected_cluts.end(), i) != selected_cluts.end();
-            ImU32 color;
-            float thickness;
-            ImU32 fill = 0;
-            if (tim.selected) { color = IM_COL32(60, 220, 110, 255); thickness = 2.5f; fill = IM_COL32(60, 220, 110, 130); }
-            else if (clut_selected_here) { color = IM_COL32(60, 200, 110, 170); thickness = 1.5f; fill = IM_COL32(60, 200, 110, 90); }
-            else { color = IM_COL32(120, 120, 120, 180); thickness = 1.0f; }
-
-            if (fill != 0) draw_list->AddRectFilled(p0, p1, fill);
-            // Overlap warning tint goes on top of the highlight fill so it's
-            // always noticeable even on a selected/highlighted region.
-            if (has_overlap(i, false)) {
-                draw_list->AddRectFilled(p0, p1, IM_COL32(255, 40, 40, 140));
-            }
-
-            auto key = RectKey(p0, p1);
-            bool already_drawn = std::find(drawn_image_borders.begin(), drawn_image_borders.end(), key) !=
-                                  drawn_image_borders.end();
-            if (is_active || !already_drawn) {
-                draw_list->AddRect(p0, p1, color, 0.0f, 0, thickness);
-            }
-            drawn_image_borders.push_back(key);
         }
 
-        // --- CLUT bounds ---
+        // --- CLUT input ---
         if (tim.has_clut) {
             ImVec2 p0 = clut_p0[i], p1 = clut_p1[i];
 
@@ -448,6 +472,72 @@ void VRAMPanel::DrawRegions(tim::Document& document, ImVec2 canvas_origin, float
                     document.PushUndoSnapshot();
                 }
             }
+
+        }
+    }
+
+    // --- Pass 2: visuals. Drawn in the opposite order from pass 1 above -
+    // the active region is painted LAST here so its highlight color ends
+    // up on top and is never hidden by an overlapping duplicate underneath
+    // it, even though it had to be the FIRST one submitted for input.
+    std::vector<int> draw_order(n);
+    for (int i = 0; i < n; i++) draw_order[i] = i;
+    if (active >= 0 && active < n) {
+        auto it = std::find(draw_order.begin(), draw_order.end(), active);
+        if (it != draw_order.end()) {
+            draw_order.erase(it);
+            draw_order.push_back(active);
+        }
+    }
+
+    // When several regions occupy the exact same rect, only the first one
+    // gets its border drawn - otherwise identical borders stack and read as
+    // one abnormally thick line. The active region is always force-drawn
+    // (on top, last) regardless, so its highlight is never hidden by an
+    // earlier duplicate.
+    std::vector<std::array<int, 4>> drawn_image_borders, drawn_clut_borders;
+
+    for (int i : draw_order) {
+        TIM_Image& tim = images[i];
+        bool is_active = (i == active);
+
+        // --- Image visuals ---
+        {
+            ImVec2 p0 = img_p0[i], p1 = img_p1[i];
+
+            // Green highlights this image: bright when it's directly
+            // selected, dim when it isn't but its CLUT is (so you can see
+            // which image a selected palette belongs to). Both are an
+            // actual fill, not just a border color, so it reads clearly.
+            bool clut_selected_here = tim.has_clut &&
+                std::find(selected_cluts.begin(), selected_cluts.end(), i) != selected_cluts.end();
+            ImU32 color;
+            float thickness;
+            ImU32 fill = 0;
+            if (tim.selected) { color = IM_COL32(60, 220, 110, 255); thickness = 2.5f; fill = IM_COL32(60, 220, 110, 130); }
+            else if (clut_selected_here) { color = IM_COL32(60, 200, 110, 170); thickness = 1.5f; fill = IM_COL32(60, 200, 110, 90); }
+            else { color = IM_COL32(120, 120, 120, 180); thickness = 1.0f; }
+
+            if (fill != 0) draw_list->AddRectFilled(p0, p1, fill);
+            // Overlap warning tint goes on top of the highlight fill so it's
+            // always noticeable even on a selected/highlighted region.
+            if (has_overlap(i, false)) {
+                draw_list->AddRectFilled(p0, p1, IM_COL32(255, 40, 40, 140));
+            }
+
+            auto key = RectKey(p0, p1);
+            bool already_drawn = std::find(drawn_image_borders.begin(), drawn_image_borders.end(), key) !=
+                                  drawn_image_borders.end();
+            if (is_active || !already_drawn) {
+                draw_list->AddRect(p0, p1, color, 0.0f, 0, thickness);
+            }
+            drawn_image_borders.push_back(key);
+        }
+
+        // --- CLUT visuals ---
+        if (tim.has_clut) {
+            ImVec2 p0 = clut_p0[i], p1 = clut_p1[i];
+            bool is_selected = std::find(selected_cluts.begin(), selected_cluts.end(), i) != selected_cluts.end();
 
             // Yellow highlights this CLUT: bright when directly selected,
             // dim when its owning image is selected instead (so you can see
@@ -675,7 +765,7 @@ void VRAMPanel::RenderSidebar(tim::Document& document, int mouse_word_x, int mou
         // Every entry gets the same shape - name, then preview, then palette
         // row - regardless of whether this image actually has multiple
         // palettes, so the list doesn't reflow unevenly as you scroll it.
-        ImGui::Text("Image #%d", tim.file_index);
+        ImGui::Text("Image #%d%s", tim.file_index, tim.dirty ? " *" : "");
 
         const float kThumbHeight = 40.0f;
         float aspect = tim.image_header.height > 0
