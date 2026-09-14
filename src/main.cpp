@@ -4,12 +4,13 @@
 #include <GLFW/glfw3.h>
 #include "nfd.h"
 #include "ui/editor_app.h"
+#include "ui/icon_font.h"
 
 int main(int argc, char** argv) {
     if (!glfwInit()) return -1;
     NFD_Init();
 
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Editor TIM PS1", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(1280, 720, "TIM Editor", NULL, NULL);
     if (!window) {
         glfwTerminate();
         return -1;
@@ -24,6 +25,8 @@ int main(int argc, char** argv) {
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 130");
+
+    ui::LoadFonts();
 
     ui::EditorApp app;
     app.Initialize();
