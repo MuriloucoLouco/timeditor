@@ -5,7 +5,7 @@
 
 namespace ui {
 
-// "TIM Inspector" tab: file list on the left; on the right, one of a file
+// "TIM Editor" tab: file list on the left; on the right, one of a file
 // overview page, or a per-image view split into "Info" (properties, VRAM
 // navigation, delete) and "Image Editor" (paint/import/palette editing).
 //
@@ -23,6 +23,12 @@ public:
     // EditorApp forwards it into VRAMPanel::FocusOn (which also selects it)
     // and switches tabs.
     bool ConsumePendingVramFocus(int& index, bool& is_clut);
+
+    // Switches straight to the per-image view, following whichever image
+    // is currently document.GetActiveIndex() (e.g. right after
+    // EditorApp::NewTim() creates and selects one) - the same jump the
+    // "+ Add New Image" button on the file overview page makes for itself.
+    void FocusImage();
 
 private:
     static constexpr float kListMinWidth = 150.0f;

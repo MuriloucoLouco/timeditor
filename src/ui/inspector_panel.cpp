@@ -3,6 +3,7 @@
 #include "splitter.h"
 #include "gl_image.h"
 #include "zoom_pan.h"
+#include "text_utils.h"
 #include "imgui.h"
 #include "../core/vram_manager.h"
 #include "../gfx/tim_texture_builder.h"
@@ -69,6 +70,8 @@ bool InspectorPanel::ConsumePendingVramFocus(int& index, bool& is_clut) {
     return true;
 }
 
+void InspectorPanel::FocusImage() { view_mode = ViewMode::Image; }
+
 void InspectorPanel::Render(tim::Document& document) {
     // A deletion evicted by a newer one (or by loading/closing a file) still
     // held its GL textures alive in case of undo; once it's truly gone,
@@ -121,16 +124,6 @@ void InspectorPanel::RenderFileList(tim::Document& document) {
     ImGui::Text("Loaded Files:");
     ImGui::Separator();
 
-    bool all_selected = !tims.empty();
-    for (const auto& tim : tims) {
-        if (!tim.selected) { all_selected = false; break; }
-    }
-
-    if (ImGui::Checkbox("Select All", &all_selected)) {
-        for (auto& tim : tims) tim.selected = all_selected;
-    }
-    ImGui::Separator();
-
     // Closing mutates document.Images() (indices shift or vanish), which
     // would corrupt the rest of this loop if done mid-iteration - so a click
     // on "x" is only recorded here and actually applied once the loop (and
@@ -160,17 +153,34 @@ void InspectorPanel::RenderFileList(tim::Document& document) {
 
         std::string header = filename + (dirty ? " *" : "") +
                               "  (" + std::to_string(indices.size()) + (indices.size() == 1 ? " image)" : " images)");
+
+        // GetWindowContentRegionMax() (unlike GetWindowWidth()) already
+        // excludes a visible scrollbar's width, so the close button lands
+        // to its left instead of underneath it once the file list
+        // overflows. The label itself is truncated to never reach that
+        // column in the first place - an unframed TreeNodeEx's clickable
+        // area follows its rendered text width, and since overlapping
+        // ImGui items resolve first-submitted-wins, a long label would
+        // otherwise swallow clicks meant for the button drawn after it.
+        float close_btn_x = ImGui::GetWindowContentRegionMax().x - 22.0f;
+        float label_start_x = ImGui::GetCursorPosX();
+        const ImGuiStyle& style = ImGui::GetStyle();
+        float max_label_width = close_btn_x - label_start_x - ImGui::GetFontSize() - style.FramePadding.x * 2 -
+                                 style.ItemSpacing.x * 2 - 4.0f;
+        header = TruncateToWidth(header, max_label_width);
+
         // OpenOnArrow: clicking the label itself (below) opens the file
         // overview instead of just expanding/collapsing the children.
         bool node_open = ImGui::TreeNodeEx("##group_node", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow,
                                             "%s", header.c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", filepath.c_str());
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
             view_mode = ViewMode::FileOverview;
             overview_file = filepath;
         }
 
         ImGui::SameLine();
-        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 26.0f);
+        ImGui::SetCursorPosX(close_btn_x);
         if (ImGui::SmallButton("x")) {
             if (dirty) {
                 pending_close_file = filepath;

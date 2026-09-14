@@ -146,6 +146,19 @@ public:
     bool Undo() { int unused; return Undo(unused); }
     bool CanUndo() const { return !undo_stack.empty() || pending_delete.has_value() || !content_undo_stack.empty(); }
 
+    // Re-applies whichever Undo() call was made most recently, same
+    // content_rebuild_index convention as Undo(). Every Undo() call moves
+    // the state it's about to overwrite onto a single LIFO redo_stack (see
+    // RedoEntry) before overwriting it, so Redo() never needs the
+    // seq-comparison Undo() does across its three snapshot kinds - undoing
+    // always fully determines, in the moment, exactly one entry to redo
+    // next. Any new edit (a PushUndoSnapshot/PushContentUndoSnapshot call,
+    // or DeleteImage/AddImages/CloseFile changing the image set) clears
+    // this stack, same as any real editor's redo history.
+    bool Redo(int& content_rebuild_index);
+    bool Redo() { int unused; return Redo(unused); }
+    bool CanRedo() const { return !redo_stack.empty(); }
+
     // Bumped whenever the loaded set or any image/CLUT VRAM origin/content
     // changes. VRAMPanel compares this against its own last-seen value to
     // know when the emulated VRAM needs to be rebuilt from scratch.
@@ -193,15 +206,43 @@ private:
         int seq = 0;
     };
 
+    // What a single Undo() call moved out of the way, so Redo() can put it
+    // straight back with the same restore logic Undo() itself uses - one
+    // tagged entry per undone action, in strict last-undone-first-redone
+    // order. Only the member matching `kind` is populated; the others just
+    // sit at their empty default (cheap - move/content are small/vector-
+    // backed, no meaningful overhead for the unused one). A Delete-kind
+    // entry only needs the index to re-delete - not a TIM_Image copy: the
+    // image itself is still alive and owned by `images[delete_index]`
+    // (Undo's delete branch moved it there), and Redo() re-derives its own
+    // fresh PendingDelete straight from that live entry, the same way
+    // DeleteImage() does. Storing a second copy here would just be a
+    // duplicate reference to the same GL texture IDs for no reason.
+    enum class RedoKind { Move, Content, Delete };
+    struct RedoEntry {
+        RedoKind kind = RedoKind::Move;
+        UndoSnapshot move;
+        ContentSnapshot content;
+        int delete_index = -1;
+    };
+
     std::vector<TIM_Image> images;
     int active_index = -1;
     int vram_version = 0;
     int structure_version = 0;
     std::vector<UndoSnapshot> undo_stack;
     std::vector<ContentSnapshot> content_undo_stack;
+    std::vector<RedoEntry> redo_stack;
     int next_action_seq = 0;
     std::optional<PendingDelete> pending_delete;
     std::optional<TIM_Image> discarded_delete;
+
+    // Shared by PushUndoSnapshot/PushContentUndoSnapshot and Undo() (which
+    // uses them to capture a redo entry for whatever it's about to
+    // overwrite) - same field-by-field copy either way, just without the
+    // seq/push-to-stack bookkeeping the two callers each handle themselves.
+    UndoSnapshot CaptureMoveSnapshot() const;
+    ContentSnapshot CaptureContentSnapshot(int index) const;
 
     std::vector<int> IndicesForFile(const std::string& filepath) const;
     // If a pending delete exists, moves it to `discarded_delete` (for the

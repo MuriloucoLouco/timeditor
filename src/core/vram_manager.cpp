@@ -88,6 +88,54 @@ void VRAMManager::WriteImagePixels(const TIM_Image& tim) {
     }
 }
 
+void VRAMManager::DecodeTexPage(uint16_t tsb, uint16_t cba, std::vector<uint8_t>& out_rgba, int& out_width) const {
+    int tpage_x_words = (tsb & 0xF) * kTPageWidthWords;
+    int tpage_y = ((tsb >> 4) & 0x1) * kTPageHeight;
+    int color_mode = (tsb >> 7) & 0x3;
+    int clut_x = (cba % 64) * 16;
+    int clut_y = cba / 64;
+
+    int texels_per_word = (color_mode == 0) ? 4 : (color_mode == 1) ? 2 : 1;
+    out_width = kTPageWidthWords * texels_per_word;
+    out_rgba.assign(static_cast<size_t>(out_width) * kTPageHeight * 4, 0);
+
+    for (int y = 0; y < kTPageHeight; y++) {
+        int vy = tpage_y + y;
+        if (vy >= kHeight) continue;
+        for (int x = 0; x < out_width; x++) {
+            uint16_t color16 = 0;
+            if (color_mode == 2) {
+                int vx = tpage_x_words + x;
+                if (vx < kWidth) color16 = vram_buffer[vy * kWidth + vx];
+            } else {
+                int word_offset = x / texels_per_word;
+                int vx = tpage_x_words + word_offset;
+                uint16_t word = (vx < kWidth) ? vram_buffer[vy * kWidth + vx] : 0;
+                int index;
+                if (color_mode == 0) {
+                    int nibble = x % 4;
+                    index = (word >> (nibble * 4)) & 0xF;
+                } else {
+                    int byte_sel = x % 2;
+                    index = byte_sel ? ((word >> 8) & 0xFF) : (word & 0xFF);
+                }
+                int cx = clut_x + index;
+                if (cx < kWidth && clut_y < kHeight) color16 = vram_buffer[clut_y * kWidth + cx];
+            }
+
+            uint8_t r = (color16 & 0x001F) << 3;
+            uint8_t g = ((color16 & 0x03E0) >> 5) << 3;
+            uint8_t b = ((color16 & 0x7C00) >> 10) << 3;
+            uint8_t a = (color16 == 0) ? 0 : 255;
+            int idx = (y * out_width + x) * 4;
+            out_rgba[idx + 0] = r;
+            out_rgba[idx + 1] = g;
+            out_rgba[idx + 2] = b;
+            out_rgba[idx + 3] = a;
+        }
+    }
+}
+
 void VRAMManager::UpdateGLTexture() {
     const int view_width = GetViewWidth();
     rgb_texture_buffer.assign(static_cast<size_t>(view_width) * kHeight * 4, 0);

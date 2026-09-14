@@ -56,6 +56,17 @@ public:
 
     uint32_t GetVRAMTextureID() const { return vram_gl_texture; }
 
+    // Decodes one full texpage tile (256/128/64 texels wide by 256 tall,
+    // depending on tsb's color mode) directly from the raw VRAM buffer into
+    // an RGBA8 buffer, using the CLUT at `cba` for indexed modes (ignored
+    // for the 16bpp direct mode). Unlike the display texture above (which
+    // is decoded in a single globally-selected view mode), this reads
+    // whatever bpp `tsb` itself specifies - needed because a 3D scene can
+    // reference several different bpp texpages/CLUTs at once. Used by the
+    // 3D viewer to build one GL texture per distinct (tsb,cba) pair a
+    // model's polygons actually reference.
+    void DecodeTexPage(uint16_t tsb, uint16_t cba, std::vector<uint8_t>& out_rgba, int& out_width) const;
+
 private:
     std::vector<uint16_t> vram_buffer;       // Actual VRAM content (BGR555, always 1024x512 words)
     std::vector<uint8_t> rgb_texture_buffer; // RGBA8 buffer, rebuilt on content/mode change

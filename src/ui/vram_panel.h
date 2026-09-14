@@ -36,10 +36,21 @@ private:
 
     float sidebar_width = 240.0f; // User-adjustable via the splitter next to it.
 
+    bool panning_active = false; // right-drag-to-pan session - see zoom_pan.h's PanWithMouseDrag
+
     bool pending_focus = false;
     int focus_x = 0, focus_y = 0, focus_w = 0, focus_h = 0;
 
     int bpp_mode_index = 2; // Combo index: 0 = 4 BPP, 1 = 8 BPP, 2 = 16 BPP
+    int last_bpp_mode_index = 2;
+    // What's currently centered in the viewport, in real VRAM units (word/
+    // line - unlike on-screen pixels, these don't depend on the BPP mode's
+    // pixel density), refreshed every frame so it's always ready to
+    // recenter on if bpp_mode_index changes next frame - switching modes
+    // changes pixels-per-word, which otherwise silently scrolled whatever
+    // was on screen out of view (the scroll position, in raw pixels,
+    // stayed put while what it pointed at in VRAM shifted).
+    float last_center_word_x = 0.0f, last_center_line_y = static_cast<float>(VRAMManager::kHeight) / 2.0f;
     float zoom = 1.0f;
     bool snap_enabled = true;
     int last_vram_version = -1;

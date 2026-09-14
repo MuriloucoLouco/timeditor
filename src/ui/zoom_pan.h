@@ -60,4 +60,28 @@ ImVec2 ZoomToCursor(float& zoom, float min_zoom, float max_zoom, ImVec2 content_
     return canvas_p0;
 }
 
+// Right-drag-to-pan for the same kind of zoomable/pannable child window
+// ZoomToCursor serves - call right after BeginChild, every frame,
+// regardless of whether the mouse is currently over the window (a drag
+// already in progress must keep panning even if it drifts outside the
+// child's bounds, same reasoning as the Model Editor viewport's own
+// hover-vs-active-gesture split). `active` is a bool the caller owns
+// (persists across frames for the duration of one drag) so multiple
+// independent pannable views in the same panel don't share state.
+inline void PanWithMouseDrag(bool& active) {
+    ImGuiIO& io = ImGui::GetIO();
+    if (!active && ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        active = true;
+    }
+    if (active && !ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+        active = false;
+    }
+    if (!active) return;
+
+    // Content moves the same direction as the mouse (a "grab and drag"
+    // pan), so scroll itself moves the opposite way.
+    ImGui::SetScrollX(ImGui::GetScrollX() - io.MouseDelta.x);
+    ImGui::SetScrollY(ImGui::GetScrollY() - io.MouseDelta.y);
+}
+
 } // namespace ui

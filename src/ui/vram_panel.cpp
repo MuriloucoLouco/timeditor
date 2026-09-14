@@ -1,9 +1,11 @@
 #include "vram_panel.h"
 #include "splitter.h"
 #include "gl_image.h"
+#include "zoom_pan.h"
 #include <GL/gl.h>
 #include <cstdio>
 #include <cmath>
+#include <climits>
 
 namespace ui {
 
@@ -91,7 +93,15 @@ void VRAMPanel::FocusOn(tim::Document& document, int index, bool is_clut) {
 
 void VRAMPanel::Render(tim::Document& document, VRAMManager& vram_manager) {
     ImGui::Text("VRAM reflects the PS1 Image Org and Palette Org addresses.");
-    ImGui::TextDisabled("Click to select (click again to deselect), Ctrl/Shift to multi-select, drag to move.");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Left-click an image or CLUT to select it (click again to deselect); Ctrl/Shift-click to select more.\n"
+            "Drag a selected image/CLUT to move it - it snaps to the TPage grid and other TIMs unless that's off.\n"
+            "Right-drag pans the view, scroll zooms toward the cursor.\n"
+            "Arrow keys nudge the current selection by one VRAM unit (word/line); Shift moves it further.");
+    }
     ImGui::Separator();
 
     const char* bpp_modes[] = { "4 BPP", "8 BPP", "16 BPP" };
@@ -115,7 +125,6 @@ void VRAMPanel::Render(tim::Document& document, VRAMManager& vram_manager) {
         }
     }
 
-    ImGui::TextDisabled("Scroll to zoom. Select something and use arrow keys to nudge it.");
     ImGui::Separator();
 
     // Images/CLUTs can shift or disappear from Images() when files are
@@ -126,6 +135,48 @@ void VRAMPanel::Render(tim::Document& document, VRAMManager& vram_manager) {
         clut_selection_anchor = -1;
         drag = DragState{};
         last_structure_version = document.GetStructureVersion();
+    }
+
+    bool bpp_mode_changed = bpp_mode_index != last_bpp_mode_index;
+    last_bpp_mode_index = bpp_mode_index;
+
+    // What to re-center on if the mode just changed: the union of whatever
+    // is actually selected, in VRAM word/line units, when there is a
+    // selection - falling back to last_center_word_x/y (see its own
+    // comment) only when nothing is selected. Centering on "the viewport's
+    // old visual center" unconditionally (the previous approach) was wrong
+    // whenever the selection sat in a corner rather than the middle of the
+    // view - e.g. scrolled to the top-left to look at an image pinned at
+    // VRAM (0,0) - since the *visual center* in that scroll position is
+    // just empty VRAM far from the image, not the image itself, so
+    // recentering on it scrolled the image out of view instead of keeping
+    // it visible.
+    bool have_bpp_recenter_target = false;
+    float bpp_recenter_word_x = last_center_word_x, bpp_recenter_line_y = last_center_line_y;
+    if (bpp_mode_changed) {
+        auto& imgs = document.Images();
+        int lo_x = INT_MAX, lo_y = INT_MAX, hi_x = INT_MIN, hi_y = INT_MIN;
+        for (const auto& img : imgs) {
+            if (!img.selected) continue;
+            lo_x = std::min(lo_x, static_cast<int>(img.image_header.origin_x));
+            lo_y = std::min(lo_y, static_cast<int>(img.image_header.origin_y));
+            hi_x = std::max(hi_x, static_cast<int>(img.image_header.origin_x) + static_cast<int>(img.image_header.width));
+            hi_y = std::max(hi_y, static_cast<int>(img.image_header.origin_y) + static_cast<int>(img.image_header.height));
+            have_bpp_recenter_target = true;
+        }
+        for (int idx : selected_cluts) {
+            if (idx < 0 || idx >= static_cast<int>(imgs.size())) continue;
+            const auto& img = imgs[idx];
+            lo_x = std::min(lo_x, static_cast<int>(img.clut_header.origin_x));
+            lo_y = std::min(lo_y, static_cast<int>(img.clut_header.origin_y));
+            hi_x = std::max(hi_x, static_cast<int>(img.clut_header.origin_x) + static_cast<int>(img.clut_header.colors_per_clut));
+            hi_y = std::max(hi_y, static_cast<int>(img.clut_header.origin_y) + static_cast<int>(img.clut_header.num_cluts));
+            have_bpp_recenter_target = true;
+        }
+        if (have_bpp_recenter_target) {
+            bpp_recenter_word_x = (lo_x + hi_x) / 2.0f;
+            bpp_recenter_line_y = (lo_y + hi_y) / 2.0f;
+        }
     }
 
     VRAMViewMode mode = IndexToViewMode(bpp_mode_index);
@@ -160,6 +211,19 @@ void VRAMPanel::Render(tim::Document& document, VRAMManager& vram_manager) {
         ImGui::SetScrollX(std::max(0.0f, target_center.x - viewport.x / 2.0f));
         ImGui::SetScrollY(std::max(0.0f, target_center.y - viewport.y / 2.0f));
         pending_focus = false;
+    } else if (bpp_mode_changed) {
+        // Re-center on the selection (or, failing that, wherever was
+        // centered last frame) now that words_scale reflects the new
+        // mode's pixel density, instead of leaving the scroll position (in
+        // raw pixels) where it was and silently showing a different part
+        // of VRAM. See bpp_recenter_word_x/y's own comment above.
+        words_scale = (static_cast<float>(vram_manager.GetViewWidth()) / VRAMManager::kWidth) * zoom;
+        canvas_size = ImVec2(vram_manager.GetViewWidth() * zoom, vram_manager.GetViewHeight() * zoom);
+
+        ImVec2 target_center(kCanvasMargin + bpp_recenter_word_x * words_scale, kCanvasMargin + bpp_recenter_line_y * zoom);
+        ImVec2 viewport = ImGui::GetWindowSize();
+        ImGui::SetScrollX(std::max(0.0f, target_center.x - viewport.x / 2.0f));
+        ImGui::SetScrollY(std::max(0.0f, target_center.y - viewport.y / 2.0f));
     }
 
     // GetCursorScreenPos()/GetScrollX() still reflect the scroll from BEFORE
@@ -203,6 +267,19 @@ void VRAMPanel::Render(tim::Document& document, VRAMManager& vram_manager) {
 
         ImGui::SetScrollX(new_scroll_x);
         ImGui::SetScrollY(new_scroll_y);
+    }
+
+    ui::PanWithMouseDrag(panning_active);
+
+    // Refreshed every frame (in mode-independent VRAM units) so it's always
+    // ready if bpp_mode_index changes on a later frame - see the member's
+    // own comment and the bpp_mode_changed branch above.
+    {
+        ImVec2 window_pos = ImGui::GetWindowPos();
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        ImVec2 viewport_center(window_pos.x + avail.x * 0.5f, window_pos.y + avail.y * 0.5f);
+        last_center_word_x = (viewport_center.x - canvas_p0.x) / words_scale;
+        last_center_line_y = (viewport_center.y - canvas_p0.y) / zoom;
     }
 
     ImVec2 canvas_p1 = ImVec2(canvas_p0.x + canvas_size.x, canvas_p0.y + canvas_size.y);

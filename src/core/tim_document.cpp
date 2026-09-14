@@ -16,6 +16,7 @@ int Document::AddImages(std::vector<TIM_Image>&& new_images) {
     structure_version++;
     undo_stack.clear(); // Snapshots are index-based; the layout just changed.
     content_undo_stack.clear();
+    redo_stack.clear(); // A new edit - any pending redo is now stale.
     return first_index;
 }
 
@@ -218,6 +219,7 @@ bool Document::CloseFile(const std::string& filepath) {
     structure_version++;
     undo_stack.clear(); // Snapshots are index-based; the layout just changed.
     content_undo_stack.clear();
+    redo_stack.clear(); // A new edit - any pending redo is now stale.
     return true;
 }
 
@@ -238,6 +240,7 @@ bool Document::DeleteImage(int index) {
     vram_version++;
     undo_stack.clear(); // Snapshots are index-based; the layout just changed.
     content_undo_stack.clear();
+    redo_stack.clear(); // A new edit - any pending redo is now stale.
     pending_delete = std::move(rec);
     return true;
 }
@@ -255,7 +258,7 @@ void Document::DiscardPendingDelete() {
     pending_delete.reset();
 }
 
-void Document::PushUndoSnapshot() {
+Document::UndoSnapshot Document::CaptureMoveSnapshot() const {
     UndoSnapshot snap;
     snap.image_x.reserve(images.size());
     snap.image_y.reserve(images.size());
@@ -269,22 +272,28 @@ void Document::PushUndoSnapshot() {
         snap.clut_y.push_back(img.clut_header.origin_y);
         snap.image_dirty.push_back(img.dirty);
     }
+    return snap;
+}
+
+void Document::PushUndoSnapshot() {
+    UndoSnapshot snap = CaptureMoveSnapshot();
     snap.seq = next_action_seq++;
 
     undo_stack.push_back(std::move(snap));
     constexpr size_t kMaxUndoDepth = 100;
     if (undo_stack.size() > kMaxUndoDepth) undo_stack.erase(undo_stack.begin());
+    redo_stack.clear(); // A new edit - any pending redo is now stale.
 }
 
 void Document::DiscardLastUndo() {
     if (!undo_stack.empty()) undo_stack.pop_back();
 }
 
-void Document::PushContentUndoSnapshot(int index) {
-    if (index < 0 || index >= static_cast<int>(images.size())) return;
+Document::ContentSnapshot Document::CaptureContentSnapshot(int index) const {
+    ContentSnapshot snap;
+    if (index < 0 || index >= static_cast<int>(images.size())) return snap;
     const TIM_Image& img = images[index];
 
-    ContentSnapshot snap;
     snap.index = index;
     snap.type = img.type;
     snap.bpp = img.bpp;
@@ -300,11 +309,19 @@ void Document::PushContentUndoSnapshot(int index) {
     snap.master_width = img.master_width;
     snap.master_index_map = img.master_index_map;
     snap.dirty = img.dirty;
+    return snap;
+}
+
+void Document::PushContentUndoSnapshot(int index) {
+    if (index < 0 || index >= static_cast<int>(images.size())) return;
+
+    ContentSnapshot snap = CaptureContentSnapshot(index);
     snap.seq = next_action_seq++;
 
     content_undo_stack.push_back(std::move(snap));
     constexpr size_t kMaxContentUndoDepth = 50;
     if (content_undo_stack.size() > kMaxContentUndoDepth) content_undo_stack.erase(content_undo_stack.begin());
+    redo_stack.clear(); // A new edit - any pending redo is now stale.
 }
 
 bool Document::Undo(int& content_rebuild_index) {
@@ -323,6 +340,11 @@ bool Document::Undo(int& content_rebuild_index) {
         ContentSnapshot snap = std::move(content_undo_stack.back());
         content_undo_stack.pop_back();
         if (snap.index < 0 || snap.index >= static_cast<int>(images.size())) return false;
+
+        RedoEntry redo;
+        redo.kind = RedoKind::Content;
+        redo.content = CaptureContentSnapshot(snap.index); // what Undo is about to overwrite
+        redo_stack.push_back(std::move(redo));
 
         TIM_Image& img = images[snap.index];
         img.type = snap.type;
@@ -350,6 +372,12 @@ bool Document::Undo(int& content_rebuild_index) {
 
     if (have_delete && delete_seq >= move_seq) {
         int idx = std::clamp(pending_delete->original_index, 0, static_cast<int>(images.size()));
+
+        RedoEntry redo;
+        redo.kind = RedoKind::Delete;
+        redo.delete_index = idx;
+        redo_stack.push_back(std::move(redo));
+
         images.insert(images.begin() + idx, std::move(pending_delete->image));
         pending_delete.reset();
         active_index = idx;
@@ -360,12 +388,98 @@ bool Document::Undo(int& content_rebuild_index) {
         return true;
     }
 
+    RedoEntry redo;
+    redo.kind = RedoKind::Move;
+    redo.move = CaptureMoveSnapshot(); // what Undo is about to overwrite
+
     UndoSnapshot snap = std::move(undo_stack.back());
     undo_stack.pop_back();
 
     // The image set changed since this snapshot was taken - it no longer
     // lines up with `images`, so there's nothing safe to restore.
     if (snap.image_x.size() != images.size()) return false;
+
+    redo_stack.push_back(std::move(redo));
+
+    for (size_t i = 0; i < images.size(); i++) {
+        images[i].image_header.origin_x = snap.image_x[i];
+        images[i].image_header.origin_y = snap.image_y[i];
+        images[i].clut_header.origin_x = snap.clut_x[i];
+        images[i].clut_header.origin_y = snap.clut_y[i];
+        images[i].dirty = snap.image_dirty[i];
+    }
+    vram_version++;
+    return true;
+}
+
+bool Document::Redo(int& content_rebuild_index) {
+    content_rebuild_index = -1;
+    if (redo_stack.empty()) return false;
+
+    RedoEntry entry = std::move(redo_stack.back());
+    redo_stack.pop_back();
+
+    if (entry.kind == RedoKind::Content) {
+        const ContentSnapshot& snap = entry.content;
+        if (snap.index < 0 || snap.index >= static_cast<int>(images.size())) return false;
+
+        ContentSnapshot undo_snap = CaptureContentSnapshot(snap.index); // what Redo is about to overwrite
+        undo_snap.seq = next_action_seq++;
+        content_undo_stack.push_back(std::move(undo_snap));
+
+        TIM_Image& img = images[snap.index];
+        img.type = snap.type;
+        img.bpp = snap.bpp;
+        img.real_width = snap.pixel_width;
+        img.image_header.width = static_cast<uint16_t>(snap.width_words);
+        img.image_header.height = static_cast<uint16_t>(snap.height);
+        img.image_data = snap.image_data;
+        img.image_header.size = static_cast<uint32_t>(12 + img.image_data.size());
+        img.has_clut = snap.has_clut;
+        img.clut_header.colors_per_clut = static_cast<uint16_t>(snap.colors_per_clut);
+        img.clut_header.num_cluts = static_cast<uint16_t>(snap.num_cluts);
+        img.clut_data = snap.clut_data;
+        img.clut_header.size = static_cast<uint32_t>(12 + img.clut_data.size() * sizeof(uint16_t));
+        img.master_rgba = snap.master_rgba;
+        img.master_width = snap.master_width;
+        img.master_index_map = snap.master_index_map;
+        if (img.selected_clut >= img.clut_header.num_cluts) img.selected_clut = std::max(0, img.clut_header.num_cluts - 1);
+        img.dirty = snap.dirty;
+
+        vram_version++;
+        content_rebuild_index = snap.index;
+        return true;
+    }
+
+    if (entry.kind == RedoKind::Delete) {
+        if (images.empty()) return false;
+        int idx = std::clamp(entry.delete_index, 0, static_cast<int>(images.size()) - 1);
+
+        DiscardPendingDelete(); // should already be empty (see Redo's header comment), but stay defensive
+        PendingDelete rec;
+        rec.image = std::move(images[idx]);
+        rec.original_index = idx;
+        rec.seq = next_action_seq++;
+        images.erase(images.begin() + idx);
+
+        if (active_index == idx) active_index = -1;
+        else if (active_index > idx) active_index--;
+
+        structure_version++;
+        vram_version++;
+        undo_stack.clear(); // Indices just shifted again.
+        content_undo_stack.clear();
+        pending_delete = std::move(rec);
+        return true;
+    }
+
+    // RedoKind::Move
+    const UndoSnapshot& snap = entry.move;
+    if (snap.image_x.size() != images.size()) return false;
+
+    UndoSnapshot undo_snap = CaptureMoveSnapshot(); // what Redo is about to overwrite
+    undo_snap.seq = next_action_seq++;
+    undo_stack.push_back(std::move(undo_snap));
 
     for (size_t i = 0; i < images.size(); i++) {
         images[i].image_header.origin_x = snap.image_x[i];

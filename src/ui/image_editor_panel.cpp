@@ -3,6 +3,7 @@
 #include "../gfx/image_quantizer.h"
 #include "../gfx/tim_texture_builder.h"
 #include "gl_image.h"
+#include "IconsFontAwesome6.h"
 #include "zoom_pan.h"
 #include <GL/gl.h>
 #include <algorithm>
@@ -22,12 +23,15 @@ void ImageEditorPanel::Render(tim::Document& document, int index) {
     if (index != current_index) {
         current_index = index;
         editing_clut_row = tim.selected_clut;
-        editing_swatch_index = -1;
         active_tool = Tool::Pencil;
         tool_dragging = false;
+        has_selection = false;
+        selection_moving = false;
         canvas_zoom = 8.0f;
         resize_w = tim.master_width;
         resize_h = tim.image_header.height;
+
+        SyncDefaultSwatchSelection(tim);
     }
 
     if (ImGui::Button("Save")) document.Save(tim.filename);
@@ -35,11 +39,12 @@ void ImageEditorPanel::Render(tim::Document& document, int index) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "(unsaved changes)");
     }
+    ImGui::SameLine(0, 24.0f);
+    RenderBppDropdown(document, tim);
+
     ImGui::SameLine(ImGui::GetWindowWidth() - 140.0f);
     if (ImGui::Button("Import Image...")) import_dialog.Open(index);
     import_dialog.Render(document);
-
-    RenderBppDropdown(document, tim);
     ImGui::Separator();
 
     RenderCanvas(document, tim);
@@ -116,22 +121,66 @@ void ImageEditorPanel::SwitchBpp(tim::Document& document, TIM_Image& tim, int ne
     document.ReplaceMasterImage(current_index, std::move(master));
 
     editing_clut_row = 0;
+    SyncDefaultSwatchSelection(tim);
     gfx::TIMTextureBuilder::RebuildTextures(tim);
+}
+
+void ImageEditorPanel::SyncDefaultSwatchSelection(TIM_Image& tim) {
+    if (tim.has_clut && tim.clut_header.colors_per_clut > 0) {
+        editing_swatch_index = 0;
+        uint16_t color = tim.clut_data[static_cast<size_t>(editing_clut_row) * tim.clut_header.colors_per_clut];
+        uint8_t rgba[4];
+        gfx::ImageQuantizer::BGR555ToRGBA(color, rgba);
+        draw_color[0] = rgba[0] / 255.0f;
+        draw_color[1] = rgba[1] / 255.0f;
+        draw_color[2] = rgba[2] / 255.0f;
+        draw_color[3] = 1.0f;
+    } else {
+        editing_swatch_index = -1;
+    }
 }
 
 void ImageEditorPanel::RenderToolbar(TIM_Image& tim) {
     ImGui::SeparatorText("Tools");
-    struct Entry { const char* label; Tool tool; };
-    Entry tools[] = { { "Pencil", Tool::Pencil },   { "Eraser", Tool::Eraser }, { "Fill", Tool::Fill },
-                       { "Eyedropper", Tool::Eyedropper }, { "Line", Tool::Line },     { "Rect", Tool::Rect } };
-    for (int i = 0; i < 6; i++) {
-        bool selected = active_tool == tools[i].tool;
-        if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.55f, 0.35f, 1.0f));
-        if (ImGui::Button(tools[i].label, ImVec2(76.0f, 0))) active_tool = tools[i].tool;
-        if (selected) ImGui::PopStyleColor();
-        if (i % 2 == 0) ImGui::SameLine();
+
+    // Same icon-button-with-active-highlight pattern as the Model Editor's
+    // toolbar (model_editor_panel.cpp) - same icon font, same 32x32 size,
+    // same "PushStyleColor(ButtonActive) while selected" convention -
+    // rather than the wide text-label buttons this used to be, which read
+    // as a plain default-ImGui list next to that panel's redesigned one.
+    const ImVec2 kIconBtn(32.0f, 32.0f);
+    auto ToolButton = [&](const char* icon, const char* tooltip, Tool tool) {
+        bool active = active_tool == tool;
+        if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_ButtonActive]);
+        if (ImGui::Button(icon, kIconBtn)) active_tool = tool;
+        if (active) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
+    };
+
+    ToolButton(ICON_FA_VECTOR_SQUARE, "Select (drag to draw, drag inside to move)", Tool::Select);
+    ImGui::SameLine();
+    ToolButton(ICON_FA_PENCIL, "Pencil", Tool::Pencil);
+    ImGui::SameLine();
+    ToolButton(ICON_FA_ERASER, "Eraser", Tool::Eraser);
+    ImGui::SameLine();
+    ToolButton(ICON_FA_FILL_DRIP, "Fill (fills inside the selection, if any)", Tool::Fill);
+
+    ToolButton(ICON_FA_EYE_DROPPER, "Eyedropper", Tool::Eyedropper);
+    ImGui::SameLine();
+    ToolButton(ICON_FA_SLASH, "Line", Tool::Line);
+    ImGui::SameLine();
+    ToolButton(ICON_FA_SQUARE_FULL, "Rect", Tool::Rect);
+
+    if (active_tool == Tool::Rect) {
+        ImGui::SameLine(0, 16.0f);
+        ImGui::Checkbox("Filled", &rect_filled);
     }
-    if (active_tool == Tool::Rect) ImGui::Checkbox("Filled", &rect_filled);
+
+    if (has_selection) {
+        ImGui::TextDisabled("Selection: %d x %d px", std::abs(sel_x1 - sel_x0) + 1, std::abs(sel_y1 - sel_y0) + 1);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Deselect")) has_selection = false;
+    }
 
     ImGui::Spacing();
     if (!tim.has_clut) {
@@ -144,13 +193,54 @@ void ImageEditorPanel::RenderToolbar(TIM_Image& tim) {
 
 void ImageEditorPanel::RenderResizeControls(tim::Document& document, TIM_Image& tim) {
     ImGui::SeparatorText("Canvas Size");
-    ImGui::SetNextItemWidth(70.0f);
-    ImGui::InputInt("W##resizew", &resize_w);
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(70.0f);
-    ImGui::InputInt("H##resizeh", &resize_h);
-    ImGui::SameLine();
-    if (ImGui::Button("Apply##resize")) ApplyCanvasResize(document, tim);
+    ImGui::Text("Current: %d x %d px", tim.master_width, tim.image_header.height);
+
+    // A proper OK/Cancel dialog (like every real image editor's "Canvas
+    // Size" - MS Paint, Photoshop, GIMP all use one) rather than inline
+    // fields plus a permanently-visible Apply/Reset pair: typed values
+    // only ever take effect on OK, and Cancel just closes without
+    // touching the image at all, so there's nothing to "reset".
+    if (ImGui::Button("Resize Canvas...", ImVec2(-1, 0))) {
+        resize_w = tim.master_width;
+        resize_h = tim.image_header.height;
+        open_resize_popup = true;
+    }
+
+    if (open_resize_popup) {
+        ImGui::OpenPopup("Resize Canvas");
+        open_resize_popup = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(280.0f, 0), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Resize Canvas", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("New size, in pixels (top-left corner stays fixed):");
+
+        // step=0, step_fast=0 suppresses InputInt's usual +/- spin buttons,
+        // which at this field width left barely any room for the actual
+        // text box - this is meant to read as a plain text field, not a
+        // stepper.
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::InputInt("Width##resizew", &resize_w, 0, 0);
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::InputInt("Height##resizeh", &resize_h, 0, 0);
+        resize_w = std::max(1, resize_w);
+        resize_h = std::max(1, resize_h);
+
+        int rounded_w = gfx::ImageQuantizer::RoundWidthForBpp(resize_w, tim.bpp);
+        if (rounded_w != resize_w) {
+            ImGui::TextDisabled("Width rounds up to %d px for %d BPP.", rounded_w, tim.bpp);
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("OK", ImVec2(90.0f, 0))) {
+            ApplyCanvasResize(document, tim);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(90.0f, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 void ImageEditorPanel::ApplyCanvasResize(tim::Document& document, TIM_Image& tim) {
@@ -160,6 +250,9 @@ void ImageEditorPanel::ApplyCanvasResize(tim::Document& document, TIM_Image& tim
     int new_h = std::max(1, resize_h);
     int px_width = gfx::ImageQuantizer::RoundWidthForBpp(new_w, tim.bpp);
 
+    // Always anchored at (0,0): growing only pads to the right/bottom,
+    // shrinking only crops from the right/bottom - the existing content's
+    // top-left corner never moves.
     std::vector<uint8_t> new_rgba(static_cast<size_t>(px_width) * new_h * 4, 0);
     std::vector<uint8_t> new_index_map;
     if (!tim.master_index_map.empty()) new_index_map.assign(static_cast<size_t>(px_width) * new_h, 0);
@@ -396,6 +489,7 @@ void ImageEditorPanel::RenderCanvas(tim::Document& document, TIM_Image& tim) {
         ImVec2 hp1(hp0.x + canvas_zoom, hp0.y + canvas_zoom);
         ImU32 cursor_color;
         switch (active_tool) {
+            case Tool::Select: cursor_color = IM_COL32(60, 160, 255, 255); break;
             case Tool::Eraser: cursor_color = IM_COL32(255, 90, 90, 255); break;
             case Tool::Fill: cursor_color = IM_COL32(255, 220, 80, 255); break;
             case Tool::Eyedropper: cursor_color = IM_COL32(80, 200, 255, 255); break;
@@ -411,6 +505,19 @@ void ImageEditorPanel::RenderCanvas(tim::Document& document, TIM_Image& tim) {
         draw_list->AddRect(a, b, IM_COL32(255, 255, 255, 220), 0.0f, 0, 2.0f);
     }
 
+    // The active selection's outline - offset live by the in-progress move
+    // delta while it's being dragged, so it visibly follows the drag rather
+    // than jumping to its new spot only on release.
+    if (has_selection) {
+        int ox = selection_moving ? move_delta_x : 0;
+        int oy = selection_moving ? move_delta_y : 0;
+        int lo_x = std::min(sel_x0, sel_x1) + ox, hi_x = std::max(sel_x0, sel_x1) + ox;
+        int lo_y = std::min(sel_y0, sel_y1) + oy, hi_y = std::max(sel_y0, sel_y1) + oy;
+        ImVec2 a(canvas_p0.x + lo_x * canvas_zoom, canvas_p0.y + lo_y * canvas_zoom);
+        ImVec2 b(canvas_p0.x + (hi_x + 1) * canvas_zoom, canvas_p0.y + (hi_y + 1) * canvas_zoom);
+        draw_list->AddRect(a, b, IM_COL32(60, 160, 255, 255), 0.0f, 0, 2.0f);
+    }
+
     ImGui::EndChild();
 }
 
@@ -422,13 +529,30 @@ void ImageEditorPanel::HandleToolInput(tim::Document& document, TIM_Image& tim, 
         last_paint_px = px;
         last_paint_py = py;
 
-        if (active_tool != Tool::Eyedropper) {
+        // Select doesn't touch pixel data at all when it's defining a new
+        // rectangle - only a move-drag (starting inside the existing
+        // selection) actually mutates anything, so only that case needs
+        // the undo snapshot/backup other tools always take.
+        selection_moving = active_tool == Tool::Select && has_selection && px >= std::min(sel_x0, sel_x1) &&
+                            px <= std::max(sel_x0, sel_x1) && py >= std::min(sel_y0, sel_y1) &&
+                            py <= std::max(sel_y0, sel_y1);
+        bool needs_backup = active_tool != Tool::Eyedropper && (active_tool != Tool::Select || selection_moving);
+        if (needs_backup) {
             document.PushContentUndoSnapshot(current_index);
             stroke_master_backup = tim.master_rgba;
             stroke_index_backup = tim.master_index_map;
         }
+        move_delta_x = 0;
+        move_delta_y = 0;
 
         switch (active_tool) {
+            case Tool::Select:
+                if (!selection_moving) {
+                    has_selection = true; // starts a fresh rect at the click point; grows as the drag continues
+                    sel_x0 = sel_x1 = px;
+                    sel_y0 = sel_y1 = py;
+                }
+                break;
             case Tool::Pencil:
                 PaintMasterPixel(tim, px, py, false);
                 LiveUpdate(document, tim);
@@ -457,6 +581,19 @@ void ImageEditorPanel::HandleToolInput(tim::Document& document, TIM_Image& tim, 
         }
     } else if (tool_dragging) {
         switch (active_tool) {
+            case Tool::Select:
+                if (selection_moving) {
+                    tim.master_rgba = stroke_master_backup;
+                    tim.master_index_map = stroke_index_backup;
+                    move_delta_x = px - drag_start_px;
+                    move_delta_y = py - drag_start_py;
+                    MoveSelectionMaster(tim, move_delta_x, move_delta_y);
+                    LiveUpdate(document, tim);
+                } else {
+                    sel_x1 = px;
+                    sel_y1 = py;
+                }
+                break;
             case Tool::Pencil:
                 DrawLineMaster(tim, last_paint_px, last_paint_py, px, py, false);
                 last_paint_px = px;
@@ -491,6 +628,26 @@ void ImageEditorPanel::HandleToolInput(tim::Document& document, TIM_Image& tim, 
 }
 
 void ImageEditorPanel::FinishStroke() {
+    if (active_tool == Tool::Select) {
+        if (selection_moving) {
+            // The rect itself stays wherever it was defined; only its
+            // pixel content moved (already committed live, frame by
+            // frame, in MoveSelectionMaster) - so drag it along too.
+            sel_x0 += move_delta_x;
+            sel_x1 += move_delta_x;
+            sel_y0 += move_delta_y;
+            sel_y1 += move_delta_y;
+        } else {
+            if (sel_x0 > sel_x1) std::swap(sel_x0, sel_x1);
+            if (sel_y0 > sel_y1) std::swap(sel_y0, sel_y1);
+            // A plain click with no real drag defines nothing - treat it as
+            // "click elsewhere to deselect", not a 1x1 selection.
+            if (sel_x0 == sel_x1 && sel_y0 == sel_y1) has_selection = false;
+        }
+        selection_moving = false;
+        move_delta_x = move_delta_y = 0;
+    }
+
     tool_dragging = false;
     stroke_master_backup.clear();
     stroke_index_backup.clear();
@@ -563,6 +720,19 @@ void ImageEditorPanel::FloodFillMaster(TIM_Image& tim, int px, int py) {
     int w = tim.master_width, h = tim.image_header.height;
     if (px < 0 || py < 0 || px >= w || py >= h) return;
 
+    // An active selection clips the flood fill to its bounds (like any
+    // other paint tool is already implicitly bounded by where you click/
+    // drag) - flood fill is the one tool that would otherwise ignore it
+    // entirely and spread across the whole canvas.
+    int lo_x = 0, hi_x = w - 1, lo_y = 0, hi_y = h - 1;
+    if (has_selection) {
+        lo_x = std::max(0, std::min(sel_x0, sel_x1));
+        hi_x = std::min(w - 1, std::max(sel_x0, sel_x1));
+        lo_y = std::max(0, std::min(sel_y0, sel_y1));
+        hi_y = std::min(h - 1, std::max(sel_y0, sel_y1));
+        if (px < lo_x || px > hi_x || py < lo_y || py > hi_y) return;
+    }
+
     size_t start = static_cast<size_t>(py) * w + px;
     uint8_t target[4] = { tim.master_rgba[start * 4 + 0], tim.master_rgba[start * 4 + 1],
                            tim.master_rgba[start * 4 + 2], tim.master_rgba[start * 4 + 3] };
@@ -584,13 +754,44 @@ void ImageEditorPanel::FloodFillMaster(TIM_Image& tim, int px, int py) {
         int neighbors[4][2] = { { x - 1, y }, { x + 1, y }, { x, y - 1 }, { x, y + 1 } };
         for (auto& n : neighbors) {
             int nx = n[0], ny = n[1];
-            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            if (nx < lo_x || ny < lo_y || nx > hi_x || ny > hi_y) continue;
             size_t ni = static_cast<size_t>(ny) * w + nx;
             if (visited[ni]) continue;
             const uint8_t* c = &tim.master_rgba[ni * 4];
             if (c[0] == target[0] && c[1] == target[1] && c[2] == target[2] && c[3] == target[3]) {
                 visited[ni] = true;
                 stack.push_back(ny * w + nx);
+            }
+        }
+    }
+}
+
+void ImageEditorPanel::MoveSelectionMaster(TIM_Image& tim, int dx, int dy) {
+    int w = tim.master_width, h = tim.image_header.height;
+    int lo_x = std::min(sel_x0, sel_x1), hi_x = std::max(sel_x0, sel_x1);
+    int lo_y = std::min(sel_y0, sel_y1), hi_y = std::max(sel_y0, sel_y1);
+
+    // Cut: clear the selection's original spot (tim's buffers were already
+    // reset to the pre-drag backup by the caller this frame, so this only
+    // needs to blank the rect itself, not the whole canvas).
+    for (int y = lo_y; y <= hi_y; y++) {
+        for (int x = lo_x; x <= hi_x; x++) PaintMasterPixel(tim, x, y, /*erase=*/true);
+    }
+
+    // Paste: stamp the ORIGINAL content - read from the untouched backup,
+    // not from tim itself, since tim's own copy at the source was just
+    // cleared above (and could overlap the destination for a small drag).
+    for (int y = lo_y; y <= hi_y; y++) {
+        int dst_y = y + dy;
+        if (dst_y < 0 || dst_y >= h) continue;
+        for (int x = lo_x; x <= hi_x; x++) {
+            int dst_x = x + dx;
+            if (dst_x < 0 || dst_x >= w) continue;
+            size_t src_p = static_cast<size_t>(y) * w + x;
+            size_t dst_p = static_cast<size_t>(dst_y) * w + dst_x;
+            for (int c = 0; c < 4; c++) tim.master_rgba[dst_p * 4 + c] = stroke_master_backup[src_p * 4 + c];
+            if (!tim.master_index_map.empty() && src_p < stroke_index_backup.size()) {
+                tim.master_index_map[dst_p] = stroke_index_backup[src_p];
             }
         }
     }
