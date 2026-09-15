@@ -6,15 +6,27 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(OpenGL REQUIRED)
 find_package(glfw3 REQUIRED)
 
-set(IMGUI_DIR third_party/imgui)
-set(STB_DIR third_party/stb)
-set(TINYGLTF_DIR third_party/tinygltf)
-set(IMGUIZMO_DIR third_party/ImGuizmo/src) # tag 1.10+ moved ImGuizmo.h/.cpp under src/
-set(FONTS_DIR third_party/fonts)
-set(ICONFONTCPPHEADERS_DIR third_party/IconFontCppHeaders)
+# Absolute (not source-dir-relative) so tests/CMakeLists.txt - a different
+# source directory - can also reference these paths unambiguously.
+set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/third_party/imgui)
+set(STB_DIR ${CMAKE_SOURCE_DIR}/third_party/stb)
+set(TINYGLTF_DIR ${CMAKE_SOURCE_DIR}/third_party/tinygltf)
+set(IMGUIZMO_DIR ${CMAKE_SOURCE_DIR}/third_party/ImGuizmo/src) # tag 1.10+ moved ImGuizmo.h/.cpp under src/
+set(FONTS_DIR ${CMAKE_SOURCE_DIR}/third_party/fonts)
+set(ICONFONTCPPHEADERS_DIR ${CMAKE_SOURCE_DIR}/third_party/IconFontCppHeaders)
 
-file(GLOB IMGUI_SOURCES
-    ${IMGUI_DIR}/*.cpp
+# Core ImGui only (no demo, no backends) - what a headless target (like
+# tests/test_fonts.cpp, which just builds a font atlas) needs; the full app
+# additionally needs the demo window and the GLFW/OpenGL3 backends.
+set(IMGUI_CORE_SOURCES
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+)
+set(IMGUI_SOURCES
+    ${IMGUI_CORE_SOURCES}
+    ${IMGUI_DIR}/imgui_demo.cpp
     ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
     ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
@@ -39,8 +51,12 @@ add_compile_definitions(IMGUI_DEFINE_MATH_OPERATORS)
 
 add_subdirectory(third_party/nfd)
 
-add_executable(TIMEditor
-    src/main.cpp
+# Everything below src/ui (the file formats, mesh-editing ops, GL rendering,
+# and OBJ/glTF import-export) has no ImGui dependency - see
+# docs/ARCHITECTURE.md. Built once as an OBJECT library so both the app and
+# the tests/ suite link the same compiled objects instead of recompiling
+# them twice.
+set(TIMEDITOR_CORE_SOURCES
     src/core/tim_parser.cpp
     src/core/tim_document.cpp
     src/core/tim_writer.cpp
@@ -61,6 +77,15 @@ add_executable(TIMEditor
     src/gfx/tmd_obj_import.cpp
     src/gfx/tmd_gltf_export.cpp
     src/gfx/tmd_gltf_import.cpp
+)
+add_library(TIMEditorCore OBJECT ${TIMEDITOR_CORE_SOURCES})
+# gl_ext.cpp loads OpenGL extension function pointers via
+# glfwGetProcAddress - GLFW is a link dependency even though nothing in
+# this layer opens a window (the main app already creates the one used).
+target_link_libraries(TIMEditorCore PUBLIC OpenGL::GL glfw)
+
+add_executable(TIMEditor
+    src/main.cpp
     src/ui/theme.cpp
     src/ui/inspector_panel.cpp
     src/ui/vram_panel.cpp
@@ -80,4 +105,10 @@ add_executable(TIMEditor
     ${IMGUI_SOURCES}
 )
 
-target_link_libraries(TIMEditor PRIVATE glfw OpenGL::GL nfd)
+target_link_libraries(TIMEditor PRIVATE TIMEditorCore glfw OpenGL::GL nfd)
+
+option(TIMEDITOR_BUILD_TESTS "Build the tests/ suite (ctest)" ON)
+if(TIMEDITOR_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
