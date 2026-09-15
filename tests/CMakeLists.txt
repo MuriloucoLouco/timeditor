@@ -17,6 +17,7 @@ set(TIMEDITOR_TEST_NAMES
     test_raster_ops
     test_obj_roundtrip
     test_gltf_roundtrip
+    test_tmd_document
 )
 
 foreach(test_name ${TIMEDITOR_TEST_NAMES})

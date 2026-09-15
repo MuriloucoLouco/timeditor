@@ -1,6 +1,7 @@
 #pragma once
 #include "imgui.h"
 #include "../core/tim_document.h"
+#include "../core/tmd_document.h"
 #include "../core/tmd_format.h"
 #include "../core/vram_manager.h"
 #include "../gfx/framebuffer.h"
@@ -15,11 +16,15 @@
 
 namespace ui {
 
-// The "TMD Editor" tab: loads .tmd files (independently of the .tim
-// Document's file list) and renders their objects using the shared
-// VRAMManager as the texture source, the same way a real PS1 would - a
-// polygon's texpage/CLUT fields address VRAM directly, so whatever TIMs
-// are loaded and positioned there is what shows up on the model.
+// The "TMD Editor" tab: a thin UI layer over tmd::TmdDocument (which owns
+// every loaded .tmd file, independently of the .tim Document's file list,
+// and its undo/redo history - see tmd_document.h). Renders objects using
+// the shared VRAMManager as the texture source, the same way a real PS1
+// would - a polygon's texpage/CLUT fields address VRAM directly, so
+// whatever TIMs are loaded and positioned there is what shows up on the
+// model. Everything here (camera, render toggles, GL framebuffer, texture
+// cache, sidebar/dialogs) is rendering/UI state that has no business living
+// on the document itself.
 class TmdPanel {
 public:
     void Render(tim::Document& document, VRAMManager& vram_manager);
@@ -34,24 +39,24 @@ public:
 
     // Pushes a snapshot of models[model_index].objects[object_index] onto
     // the undo stack. Call before mutating an object's fields.
-    void PushUndo(int model_index, int object_index);
-    bool CanUndo() const { return !undo_stack.empty(); }
-    void Undo();
+    void PushUndo(int model_index, int object_index) { doc.PushUndo(model_index, object_index); }
+    bool CanUndo() const { return doc.CanUndo(); }
+    void Undo() { doc.Undo(); }
 
     // Mirrors tim::Document's Undo/Redo design: every Undo() moves the
     // object state it's about to overwrite onto redo_stack, so Redo() can
     // put it straight back; PushUndo (any new edit) clears redo_stack.
-    bool CanRedo() const { return !redo_stack.empty(); }
-    void Redo();
+    bool CanRedo() const { return doc.CanRedo(); }
+    void Redo() { doc.Redo(); }
 
-    bool HasActiveModel() const { return active_model >= 0 && active_model < static_cast<int>(models.size()); }
-    bool ActiveModelDirty() const { return HasActiveModel() && models[active_model].dirty; }
-    std::string ActiveModelFilename() const { return HasActiveModel() ? models[active_model].model.filename : ""; }
-    bool SaveActiveModel();
-    bool SaveActiveModelAs(const std::string& new_path);
+    bool HasActiveModel() const { return doc.HasActiveModel(); }
+    bool ActiveModelDirty() const { return doc.ActiveModelDirty(); }
+    std::string ActiveModelFilename() const { return doc.ActiveModelFilename(); }
+    bool SaveActiveModel() { return doc.SaveActiveModel(); }
+    bool SaveActiveModelAs(const std::string& new_path) { return doc.SaveActiveModelAs(new_path); }
 
-    bool AnyModelDirty() const;
-    void SaveAllDirtyModels();
+    bool AnyModelDirty() const { return doc.AnyModelDirty(); }
+    void SaveAllDirtyModels() { doc.SaveAllDirtyModels(); }
 
     // Opens the Export/Import Model dialogs for the active model - shared
     // by the sidebar's own buttons and the top menu bar's "Export"/"Import
@@ -60,38 +65,10 @@ public:
     void OpenImportDialog();
 
 private:
-    // Per-object viewer-only placement. TMD stores no object hierarchy/
-    // placement of its own (see tmd_format.h), so this is just a manual
-    // convenience the user can adjust, not data read from the file.
-    struct ObjectTransform {
-        float pos[3] = { 0, 0, 0 };
-        float rot_deg[3] = { 0, 0, 0 };
-        float scale = 1.0f;
-    };
+    using LoadedModel = tmd::TmdDocument::LoadedModel;
+    using ObjectTransform = tmd::TmdDocument::ObjectTransform;
 
-    struct LoadedModel {
-        tmd::TMD_Model model;
-        std::vector<ObjectTransform> transforms;
-        std::vector<bool> visible; // which objects are included in the render, like TIM's per-image checkboxes
-        bool dirty = false;
-    };
-
-    std::vector<LoadedModel> models;
-    int active_model = -1;
-    int active_object = -1; // which object's stats/transform show in the info bar; -1 = whole-file aggregate
-
-    // Snapshots a whole TMD_Object before some editing operation mutates it
-    // (a raw-editor field edit, or an OBJ sync apply) - simpler than TIM's
-    // undo (tim_document.h) since there's no VRAM/texture coupling to
-    // invalidate here, just object data. Capped so it can't grow unbounded.
-    struct ObjectSnapshot {
-        int model_index;
-        int object_index;
-        tmd::TMD_Object object;
-    };
-    static constexpr size_t kMaxUndo = 20;
-    std::vector<ObjectSnapshot> undo_stack;
-    std::vector<ObjectSnapshot> redo_stack;
+    tmd::TmdDocument doc;
 
     float sidebar_width = 220.0f;
     // File bar (filename/dirty/Save/Undo) is model-level state that

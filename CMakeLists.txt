@@ -64,6 +64,7 @@ set(TIMEDITOR_CORE_SOURCES
     src/core/tmd_parser.cpp
     src/core/tmd_writer.cpp
     src/core/tmd_mesh_ops.cpp
+    src/core/tmd_document.cpp
     src/gfx/tim_texture_builder.cpp
     src/gfx/image_exporter.cpp
     src/gfx/image_quantizer.cpp

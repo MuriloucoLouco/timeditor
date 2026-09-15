@@ -1,8 +1,8 @@
 #include "tmd_panel.h"
-#include "../core/tmd_parser.h"
 #include "../core/tmd_writer.h"
 #include "../gfx/tmd_obj_import.h"
 #include "../gfx/tmd_object_renderer.h"
+#include "../gfx/tmd_space.h"
 #include "file_dialog.h"
 #include "splitter.h"
 #include "text_utils.h"
@@ -15,134 +15,27 @@ namespace ui {
 
 namespace {
 constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
-
-// PS-X object/normal space is Y-down; negate Y once here so the viewer's
-// (conventional Y-up) camera shows models the right way up.
-gfx::Vec3 ToViewerSpace(int16_t x, int16_t y, int16_t z) {
-    return { static_cast<float>(x), -static_cast<float>(y), static_cast<float>(z) };
-}
-
+using gfx::ToViewerSpace;
 } // namespace
 
 void TmdPanel::LoadFile(const std::string& path, const tim::Document& document) {
-    for (const auto& loaded : models) {
-        if (loaded.model.filename == path) return;
-    }
-
-    tmd::TMD_Model model;
-    if (!tmd::Parser::LoadFromFile(path, model)) return;
-
     // With nothing loaded to texture against yet, default to showing plain
     // shading/color instead of whatever happens to be sitting in
     // (probably blank) VRAM - only on the very first TMD, so toggling
     // "Textured" back on by hand later isn't silently undone by loading a
     // second file.
-    if (models.empty() && document.Images().empty()) textured = false;
+    bool is_first_model = doc.Models().empty();
 
-    LoadedModel loaded;
-    loaded.model = std::move(model);
-    loaded.transforms.resize(loaded.model.objects.size());
-    loaded.visible.assign(loaded.model.objects.size(), true);
-    models.push_back(std::move(loaded));
+    if (!doc.LoadFile(path)) return;
 
-    active_model = static_cast<int>(models.size()) - 1;
-    active_object = -1;
+    if (is_first_model && document.Images().empty()) textured = false;
     FrameSelection();
 }
 
 void TmdPanel::NewModel() {
     std::string path = FileDialog::SaveFile("New TMD file", { { "TMD Files", "tmd" } });
     if (path.empty()) return;
-
-    for (size_t i = 0; i < models.size(); i++) {
-        if (models[i].model.filename == path) {
-            active_model = static_cast<int>(i);
-            active_object = -1;
-            return;
-        }
-    }
-
-    LoadedModel loaded;
-    loaded.model.filename = path;
-    loaded.dirty = true; // nothing written to `path` yet - there's real state to save
-    models.push_back(std::move(loaded));
-
-    active_model = static_cast<int>(models.size()) - 1;
-    active_object = -1;
-}
-
-void TmdPanel::PushUndo(int model_index, int object_index) {
-    if (model_index < 0 || model_index >= static_cast<int>(models.size())) return;
-    const auto& objects = models[model_index].model.objects;
-    if (object_index < 0 || object_index >= static_cast<int>(objects.size())) return;
-
-    if (undo_stack.size() >= kMaxUndo) undo_stack.erase(undo_stack.begin());
-    undo_stack.push_back({ model_index, object_index, objects[object_index] });
-    redo_stack.clear(); // A new edit - any pending redo is now stale.
-}
-
-void TmdPanel::Undo() {
-    if (undo_stack.empty()) return;
-    ObjectSnapshot snap = std::move(undo_stack.back());
-    undo_stack.pop_back();
-
-    if (snap.model_index < 0 || snap.model_index >= static_cast<int>(models.size())) return;
-    auto& objects = models[snap.model_index].model.objects;
-    if (snap.object_index < 0 || snap.object_index >= static_cast<int>(objects.size())) return;
-
-    if (redo_stack.size() >= kMaxUndo) redo_stack.erase(redo_stack.begin());
-    redo_stack.push_back({ snap.model_index, snap.object_index, objects[snap.object_index] });
-
-    objects[snap.object_index] = std::move(snap.object);
-    models[snap.model_index].dirty = true;
-}
-
-void TmdPanel::Redo() {
-    if (redo_stack.empty()) return;
-    ObjectSnapshot snap = std::move(redo_stack.back());
-    redo_stack.pop_back();
-
-    if (snap.model_index < 0 || snap.model_index >= static_cast<int>(models.size())) return;
-    auto& objects = models[snap.model_index].model.objects;
-    if (snap.object_index < 0 || snap.object_index >= static_cast<int>(objects.size())) return;
-
-    if (undo_stack.size() >= kMaxUndo) undo_stack.erase(undo_stack.begin());
-    undo_stack.push_back({ snap.model_index, snap.object_index, objects[snap.object_index] });
-
-    objects[snap.object_index] = std::move(snap.object);
-    models[snap.model_index].dirty = true;
-}
-
-bool TmdPanel::SaveActiveModel() {
-    if (!HasActiveModel()) return false;
-    LoadedModel& loaded = models[active_model];
-    if (!tmd::Writer::WriteToFile(loaded.model.filename, loaded.model)) return false;
-    loaded.dirty = false;
-    return true;
-}
-
-bool TmdPanel::SaveActiveModelAs(const std::string& new_path) {
-    if (!HasActiveModel()) return false;
-    LoadedModel& loaded = models[active_model];
-    if (!tmd::Writer::WriteToFile(new_path, loaded.model)) return false;
-    loaded.model.filename = new_path;
-    loaded.dirty = false;
-    return true;
-}
-
-bool TmdPanel::AnyModelDirty() const {
-    for (const auto& loaded : models) {
-        if (loaded.dirty) return true;
-    }
-    return false;
-}
-
-void TmdPanel::SaveAllDirtyModels() {
-    for (auto& loaded : models) {
-        if (loaded.dirty && tmd::Writer::WriteToFile(loaded.model.filename, loaded.model)) {
-            loaded.dirty = false;
-        }
-    }
+    doc.NewModelAt(path);
 }
 
 void TmdPanel::Render(tim::Document& document, VRAMManager& vram_manager) {
@@ -153,16 +46,18 @@ void TmdPanel::Render(tim::Document& document, VRAMManager& vram_manager) {
     }
 
     if (HasActiveModel()) {
-        export_dialog.Render(models[active_model].model, vram_manager);
+        int model_index = doc.ActiveModel();
+        tmd::TMD_Model& active = doc.Models()[model_index].model;
+        export_dialog.Render(active, vram_manager);
 
         std::string imported_path;
         gfx::TmdObjImport::ImportReport import_report;
-        if (import_dialog.Render(models[active_model].model, imported_path, import_report)) {
+        if (import_dialog.Render(active, imported_path, import_report)) {
             for (const auto& r : import_report.objects) {
-                if (r.exists_in_model) PushUndo(active_model, r.object_index);
+                if (r.exists_in_model) PushUndo(model_index, r.object_index);
             }
-            gfx::TmdObjImport::Apply(imported_path, models[active_model].model);
-            models[active_model].dirty = true;
+            gfx::TmdObjImport::Apply(imported_path, active);
+            doc.Models()[model_index].dirty = true;
             FrameSelection(); // geometry may have moved a lot; keep it in view
         }
     }
@@ -185,8 +80,8 @@ void TmdPanel::Render(tim::Document& document, VRAMManager& vram_manager) {
 
 void TmdPanel::OpenExportDialog() {
     if (!HasActiveModel()) return;
-    export_dialog.Open(models[active_model].model.filename, static_cast<int>(models[active_model].model.objects.size()),
-                        active_object);
+    const tmd::TMD_Model& active = doc.Models()[doc.ActiveModel()].model;
+    export_dialog.Open(active.filename, static_cast<int>(active.objects.size()), doc.ActiveObject());
 }
 
 void TmdPanel::OpenImportDialog() {
@@ -208,14 +103,13 @@ void TmdPanel::RenderMainArea(const tim::Document& document, VRAMManager& vram_m
         }
 
         if (ImGui::BeginTabItem("Model Editor")) {
-            if (HasActiveModel() && active_object >= 0 &&
-                active_object < static_cast<int>(models[active_model].model.objects.size())) {
-                int model_index = active_model;
-                int object_index = active_object;
+            if (doc.HasActiveObject()) {
+                int model_index = doc.ActiveModel();
+                int object_index = doc.ActiveObject();
                 model_editor.Render(
-                    model_index, object_index, models[model_index].model.objects[object_index], vram_manager,
+                    model_index, object_index, doc.Models()[model_index].model.objects[object_index], vram_manager,
                     texture_cache, [this, model_index, object_index]() { PushUndo(model_index, object_index); },
-                    [this, model_index]() { models[model_index].dirty = true; });
+                    [this, model_index]() { doc.Models()[model_index].dirty = true; });
             } else {
                 ImGui::TextDisabled("Select an object in the sidebar to edit its mesh.");
             }
@@ -223,15 +117,14 @@ void TmdPanel::RenderMainArea(const tim::Document& document, VRAMManager& vram_m
         }
 
         if (ImGui::BeginTabItem("Raw Editor")) {
-            if (HasActiveModel() && active_object >= 0 &&
-                active_object < static_cast<int>(models[active_model].model.objects.size())) {
-                int model_index = active_model;
-                int object_index = active_object;
+            if (doc.HasActiveObject()) {
+                int model_index = doc.ActiveModel();
+                int object_index = doc.ActiveObject();
                 raw_editor.Render(
-                    model_index, object_index, models[model_index].model.objects[object_index], document,
+                    model_index, object_index, doc.Models()[model_index].model.objects[object_index], document,
                     vram_manager, texture_cache,
                     [this, model_index, object_index]() { PushUndo(model_index, object_index); },
-                    [this, model_index]() { models[model_index].dirty = true; });
+                    [this, model_index]() { doc.Models()[model_index].dirty = true; });
             } else {
                 ImGui::TextDisabled("Select an object in the sidebar to inspect its raw fields.");
             }
@@ -255,6 +148,7 @@ void TmdPanel::RenderSidebar(const tim::Document& document) {
     ImGui::Separator();
 
     int close_index = -1;
+    auto& models = doc.Models();
     for (int m = 0; m < static_cast<int>(models.size()); m++) {
         auto& loaded = models[m];
         std::string filename = loaded.model.filename.substr(loaded.model.filename.find_last_of("/\\") + 1);
@@ -294,8 +188,7 @@ void TmdPanel::RenderSidebar(const tim::Document& document) {
                                             "%s", header.c_str());
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", filename.c_str());
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-            active_model = m;
-            active_object = -1;
+            doc.SetActive(m, -1);
             FrameSelection();
         }
         ImGui::SameLine();
@@ -316,11 +209,10 @@ void TmdPanel::RenderSidebar(const tim::Document& document) {
                 if (ImGui::Checkbox("##obj_chk", &object_visible)) loaded.visible[o] = object_visible;
                 ImGui::SameLine();
 
-                bool selected = (active_model == m && active_object == o);
+                bool selected = (doc.ActiveModel() == m && doc.ActiveObject() == o);
                 std::string label = "Object " + std::to_string(o);
                 if (ImGui::Selectable(label.c_str(), selected)) {
-                    active_model = m;
-                    active_object = o;
+                    doc.SetActive(m, o);
                     FrameSelection();
                 }
                 ImGui::PopID();
@@ -330,28 +222,13 @@ void TmdPanel::RenderSidebar(const tim::Document& document) {
             // perfectly valid empty object (0 verts/normals/polygons) -
             // there's nothing else to fill in before it can be selected
             // and built up from scratch in the Model Editor tab.
-            if (ImGui::Selectable("+ Add Object")) {
-                loaded.model.objects.emplace_back();
-                loaded.transforms.emplace_back();
-                loaded.visible.push_back(true);
-                loaded.dirty = true;
-                active_model = m;
-                active_object = static_cast<int>(loaded.model.objects.size()) - 1;
-            }
+            if (ImGui::Selectable("+ Add Object")) doc.AddObject(m);
             ImGui::TreePop();
         }
         ImGui::PopID();
     }
 
-    if (close_index >= 0) {
-        models.erase(models.begin() + close_index);
-        if (active_model == close_index) {
-            active_model = -1;
-            active_object = -1;
-        } else if (active_model > close_index) {
-            active_model--;
-        }
-    }
+    if (close_index >= 0) doc.CloseModel(close_index);
 
     RenderCloseConfirmPopup();
 }
@@ -364,6 +241,7 @@ void TmdPanel::RenderCloseConfirmPopup() {
 
     if (!ImGui::BeginPopupModal("Close TMD File?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
 
+    auto& models = doc.Models();
     if (pending_close_index < 0 || pending_close_index >= static_cast<int>(models.size())) {
         ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
@@ -377,13 +255,7 @@ void TmdPanel::RenderCloseConfirmPopup() {
     ImGui::Separator();
 
     auto close_it = [&]() {
-        models.erase(models.begin() + pending_close_index);
-        if (active_model == pending_close_index) {
-            active_model = -1;
-            active_object = -1;
-        } else if (active_model > pending_close_index) {
-            active_model--;
-        }
+        doc.CloseModel(pending_close_index);
         pending_close_index = -1;
     };
 
@@ -406,7 +278,7 @@ void TmdPanel::RenderCloseConfirmPopup() {
 }
 
 void TmdPanel::RenderFileBar() {
-    bool has_model = active_model >= 0 && active_model < static_cast<int>(models.size());
+    bool has_model = doc.HasActiveModel();
 
     // The active file's path/dirty state/Save, matching the TIM Editor's
     // own per-image header (RenderPreview in inspector_panel.cpp) so both
@@ -416,7 +288,7 @@ void TmdPanel::RenderFileBar() {
     // than living inside just one - unlike the render toggles/camera/
     // transform info bar, which really is 3D-View-only (see RenderInfoBar).
     if (has_model) {
-        LoadedModel& loaded = models[active_model];
+        LoadedModel& loaded = doc.Models()[doc.ActiveModel()];
         ImGui::TextUnformatted(loaded.model.filename.c_str());
         if (loaded.dirty) {
             ImGui::SameLine();
@@ -443,16 +315,15 @@ void TmdPanel::RenderFileBar() {
 }
 
 void TmdPanel::RenderInfoBar() {
-    bool has_model = active_model >= 0 && active_model < static_cast<int>(models.size());
-    bool has_object = has_model && active_object >= 0 &&
-                       active_object < static_cast<int>(models[active_model].model.objects.size());
+    bool has_model = doc.HasActiveModel();
+    bool has_object = doc.HasActiveObject();
 
     // Row 0: whichever stats currently apply, plus the render toggles - all
     // on one line so the bar stays a fixed, small height. These (and the
     // transform row below) are specific to this tab's own viewport/camera,
     // unlike the file/Undo bar above the tab strip - see RenderFileBar.
     if (has_model && !has_object) {
-        const auto& loaded = models[active_model];
+        const auto& loaded = doc.Models()[doc.ActiveModel()];
         size_t verts = 0, norms = 0, polys = 0;
         for (const auto& obj : loaded.model.objects) {
             verts += obj.vertices.size();
@@ -461,7 +332,8 @@ void TmdPanel::RenderInfoBar() {
         }
         ImGui::Text("%d obj, %zu verts, %zu polys", static_cast<int>(loaded.model.objects.size()), verts, polys);
     } else if (has_object) {
-        const auto& obj = models[active_model].model.objects[active_object];
+        int active_object = doc.ActiveObject();
+        const auto& obj = doc.Models()[doc.ActiveModel()].model.objects[active_object];
         ImGui::Text("Obj %d: %zu verts, %zu polys", active_object, obj.vertices.size(), obj.polygons.size());
     }
 
@@ -483,7 +355,7 @@ void TmdPanel::RenderInfoBar() {
     // Row 1: the active object's transform, or a hint when none is picked -
     // always present so the bar's height never jumps between the two.
     if (has_object) {
-        ObjectTransform& xf = models[active_model].transforms[active_object];
+        ObjectTransform& xf = doc.Models()[doc.ActiveModel()].transforms[doc.ActiveObject()];
         ImGui::SetNextItemWidth(180.0f);
         ImGui::DragFloat3("Pos", xf.pos, 1.0f);
         ImGui::SameLine();
@@ -498,8 +370,9 @@ void TmdPanel::RenderInfoBar() {
 }
 
 void TmdPanel::FrameSelection() {
-    if (active_model < 0 || active_model >= static_cast<int>(models.size())) return;
-    const auto& loaded = models[active_model];
+    if (!doc.HasActiveModel()) return;
+    const auto& loaded = doc.Models()[doc.ActiveModel()];
+    int active_object = doc.ActiveObject();
 
     gfx::Vec3 lo{ 1e9f, 1e9f, 1e9f }, hi{ -1e9f, -1e9f, -1e9f };
     bool any = false;
@@ -604,8 +477,8 @@ void TmdPanel::RenderViewport(VRAMManager& vram_manager) {
     glMatrixMode(GL_MODELVIEW);
     glLoadMatrixf(view.m);
 
-    if (active_model >= 0 && active_model < static_cast<int>(models.size())) {
-        DrawModel(models[active_model], vram_manager);
+    if (doc.HasActiveModel()) {
+        DrawModel(doc.Models()[doc.ActiveModel()], vram_manager);
     }
 
     glDisable(GL_BLEND);
