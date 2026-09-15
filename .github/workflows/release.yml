@@ -1,0 +1,127 @@
+name: Release
+
+# Builds TIMEditor for Windows x64 and Linux x64, runs ctest on both, and
+# (only when triggered by a pushed "v*" tag) publishes both as a single
+# GitHub Release. Can also be run manually from the Actions tab
+# (workflow_dispatch) to sanity-check both builds without cutting a
+# release - that run only uploads build artifacts, the publish-release job
+# skips itself since there's no tag.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed to attach the release assets
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # windows-latest ships a pre-cloned vcpkg at %VCPKG_INSTALLATION_ROOT%
+      # (usually C:\vcpkg) - this just installs the one dependency the repo
+      # doesn't vendor itself (see docs/ARCHITECTURE.md's dependency table).
+      - name: Install GLFW via vcpkg
+        run: vcpkg install glfw3:x64-windows
+
+      - name: Configure
+        run: >
+          cmake -B build -S .
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DTIMEDITOR_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      - name: Run tests
+        working-directory: build
+        run: ctest -C Release --output-on-failure
+
+      # TIMEditor.exe is the only thing this repo's own build produces that
+      # needs shipping - nfd/imgui/stb/tinygltf/ImGuizmo are all compiled
+      # directly into it (see CMakeLists.txt). glfw3.dll (vcpkg's dynamic
+      # triplet) is the one runtime dependency that has to travel alongside
+      # it; OpenGL (opengl32.dll) is part of Windows itself.
+      - name: Package
+        run: |
+          $dist = "dist/TIMEditor-windows-x64"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item build/Release/TIMEditor.exe $dist/
+          Copy-Item "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin/glfw3.dll" $dist/
+          Copy-Item README.md $dist/
+          Compress-Archive -Path "$dist/*" -DestinationPath TIMEditor-windows-x64.zip
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TIMEditor-windows-x64
+          path: TIMEditor-windows-x64.zip
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Matches the README's own build instructions - GLFW3 plus what nfd's
+      # GTK3 file-dialog backend needs.
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglfw3-dev libgtk-3-dev libwayland-dev pkg-config
+
+      - name: Configure
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DTIMEDITOR_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Run tests
+        working-directory: build
+        run: ctest --output-on-failure
+
+      # Not statically linked or bundled with its shared-library
+      # dependencies (glfw3/GTK3/OpenGL) - those are all common packages any
+      # desktop Linux distro already has (or a `sudo apt install
+      # libglfw3 libgtk-3-0` away), matching how most non-Flatpak/AppImage
+      # Linux GUI tools are distributed.
+      - name: Package
+        run: |
+          dist="dist/TIMEditor-linux-x64"
+          mkdir -p "$dist"
+          cp build/TIMEditor "$dist/"
+          cp README.md "$dist/"
+          tar -C dist -czf TIMEditor-linux-x64.tar.gz TIMEditor-linux-x64
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TIMEditor-linux-x64
+          path: TIMEditor-linux-x64.tar.gz
+
+  publish-release:
+    needs: [build-windows, build-linux]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/TIMEditor-windows-x64/TIMEditor-windows-x64.zip
+            artifacts/TIMEditor-linux-x64/TIMEditor-linux-x64.tar.gz
+          generate_release_notes: true
