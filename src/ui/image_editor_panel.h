@@ -1,5 +1,6 @@
 #pragma once
 #include "../core/tim_document.h"
+#include "../gfx/raster_ops.h"
 #include "import_image_dialog.h"
 #include "imgui.h"
 
@@ -84,15 +85,11 @@ private:
 
     void HandleToolInput(tim::Document& document, TIM_Image& tim, int px, int py, bool just_activated);
     void FinishStroke();
-    void PaintMasterPixel(TIM_Image& tim, int px, int py, bool erase);
-    void DrawLineMaster(TIM_Image& tim, int x0, int y0, int x1, int y1, bool erase);
-    void FillRectMaster(TIM_Image& tim, int x0, int y0, int x1, int y1, bool filled, bool erase);
-    void FloodFillMaster(TIM_Image& tim, int px, int py);
-    // Cuts the (unmoved) selection rect out of stroke_master_backup/
-    // stroke_index_backup (the pre-drag canvas) and re-stamps it offset by
-    // (dx, dy) into tim's live buffers - called fresh each drag frame after
-    // HandleToolInput has already restored tim's buffers from that same backup.
-    void MoveSelectionMaster(TIM_Image& tim, int dx, int dy);
+
+    // Small helpers binding this panel's own member state (draw_color, the
+    // Select tool's SelectionRect) to the plain, ImGui-free pixel ops in
+    // gfx/raster_ops.h.
+    gfx::SelectionRect CurrentSelectionRect() const;
 };
 
 } // namespace ui

@@ -14,6 +14,7 @@ set(TIMEDITOR_TEST_NAMES
     test_mesh_ops
     test_object_resolve
     test_mesh_import_splitter
+    test_raster_ops
     test_obj_roundtrip
     test_gltf_roundtrip
 )

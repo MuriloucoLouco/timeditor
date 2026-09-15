@@ -1,9 +1,11 @@
 #include "image_editor_panel.h"
 #include "../core/vram_manager.h"
 #include "../gfx/image_quantizer.h"
+#include "../gfx/raster_ops.h"
 #include "../gfx/tim_texture_builder.h"
 #include "gl_image.h"
 #include "IconsFontAwesome6.h"
+#include "icon_button.h"
 #include "zoom_pan.h"
 #include <GL/gl.h>
 #include <algorithm>
@@ -143,18 +145,11 @@ void ImageEditorPanel::SyncDefaultSwatchSelection(TIM_Image& tim) {
 void ImageEditorPanel::RenderToolbar(TIM_Image& tim) {
     ImGui::SeparatorText("Tools");
 
-    // Same icon-button-with-active-highlight pattern as the Model Editor's
-    // toolbar (model_editor_panel.cpp) - same icon font, same 32x32 size,
-    // same "PushStyleColor(ButtonActive) while selected" convention -
-    // rather than the wide text-label buttons this used to be, which read
-    // as a plain default-ImGui list next to that panel's redesigned one.
+    // Same shared ui::IconButton the Model Editor's toolbar uses - same
+    // icon font, same 32x32 size, same active-highlight convention.
     const ImVec2 kIconBtn(32.0f, 32.0f);
     auto ToolButton = [&](const char* icon, const char* tooltip, Tool tool) {
-        bool active = active_tool == tool;
-        if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_ButtonActive]);
-        if (ImGui::Button(icon, kIconBtn)) active_tool = tool;
-        if (active) ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
+        if (ui::IconButton(icon, tooltip, kIconBtn, active_tool == tool)) active_tool = tool;
     };
 
     ToolButton(ICON_FA_VECTOR_SQUARE, "Select (drag to draw, drag inside to move)", Tool::Select);
@@ -554,15 +549,15 @@ void ImageEditorPanel::HandleToolInput(tim::Document& document, TIM_Image& tim, 
                 }
                 break;
             case Tool::Pencil:
-                PaintMasterPixel(tim, px, py, false);
+                gfx::PaintMasterPixel(tim, px, py, false, draw_color);
                 LiveUpdate(document, tim);
                 break;
             case Tool::Eraser:
-                PaintMasterPixel(tim, px, py, true);
+                gfx::PaintMasterPixel(tim, px, py, true, draw_color);
                 LiveUpdate(document, tim);
                 break;
             case Tool::Fill:
-                FloodFillMaster(tim, px, py);
+                gfx::FloodFillMaster(tim, px, py, draw_color, CurrentSelectionRect());
                 LiveUpdate(document, tim);
                 tool_dragging = false; // One-shot: dragging further does nothing until the next click.
                 break;
@@ -587,7 +582,8 @@ void ImageEditorPanel::HandleToolInput(tim::Document& document, TIM_Image& tim, 
                     tim.master_index_map = stroke_index_backup;
                     move_delta_x = px - drag_start_px;
                     move_delta_y = py - drag_start_py;
-                    MoveSelectionMaster(tim, move_delta_x, move_delta_y);
+                    gfx::MoveSelectionMaster(tim, move_delta_x, move_delta_y, CurrentSelectionRect(),
+                                              stroke_master_backup, stroke_index_backup);
                     LiveUpdate(document, tim);
                 } else {
                     sel_x1 = px;
@@ -595,13 +591,13 @@ void ImageEditorPanel::HandleToolInput(tim::Document& document, TIM_Image& tim, 
                 }
                 break;
             case Tool::Pencil:
-                DrawLineMaster(tim, last_paint_px, last_paint_py, px, py, false);
+                gfx::DrawLineMaster(tim, last_paint_px, last_paint_py, px, py, false, draw_color);
                 last_paint_px = px;
                 last_paint_py = py;
                 LiveUpdate(document, tim);
                 break;
             case Tool::Eraser:
-                DrawLineMaster(tim, last_paint_px, last_paint_py, px, py, true);
+                gfx::DrawLineMaster(tim, last_paint_px, last_paint_py, px, py, true, draw_color);
                 last_paint_px = px;
                 last_paint_py = py;
                 LiveUpdate(document, tim);
@@ -612,13 +608,13 @@ void ImageEditorPanel::HandleToolInput(tim::Document& document, TIM_Image& tim, 
                 // preview tracks the mouse live instead of leaving a trail.
                 tim.master_rgba = stroke_master_backup;
                 tim.master_index_map = stroke_index_backup;
-                DrawLineMaster(tim, drag_start_px, drag_start_py, px, py, false);
+                gfx::DrawLineMaster(tim, drag_start_px, drag_start_py, px, py, false, draw_color);
                 LiveUpdate(document, tim);
                 break;
             case Tool::Rect:
                 tim.master_rgba = stroke_master_backup;
                 tim.master_index_map = stroke_index_backup;
-                FillRectMaster(tim, drag_start_px, drag_start_py, px, py, rect_filled, false);
+                gfx::FillRectMaster(tim, drag_start_px, drag_start_py, px, py, rect_filled, false, draw_color);
                 LiveUpdate(document, tim);
                 break;
             default:
@@ -653,148 +649,8 @@ void ImageEditorPanel::FinishStroke() {
     stroke_index_backup.clear();
 }
 
-void ImageEditorPanel::PaintMasterPixel(TIM_Image& tim, int px, int py, bool erase) {
-    if (px < 0 || py < 0 || px >= tim.master_width || py >= tim.image_header.height) return;
-    size_t p = static_cast<size_t>(py) * tim.master_width + px;
-
-    if (erase) {
-        tim.master_rgba[p * 4 + 0] = 0;
-        tim.master_rgba[p * 4 + 1] = 0;
-        tim.master_rgba[p * 4 + 2] = 0;
-        tim.master_rgba[p * 4 + 3] = 0;
-        if (!tim.master_index_map.empty()) tim.master_index_map[p] = 0; // index 0: transparent color-key convention
-        return;
-    }
-
-    uint8_t r = static_cast<uint8_t>(draw_color[0] * 255.0f);
-    uint8_t g = static_cast<uint8_t>(draw_color[1] * 255.0f);
-    uint8_t b = static_cast<uint8_t>(draw_color[2] * 255.0f);
-    uint8_t a = static_cast<uint8_t>(draw_color[3] * 255.0f);
-    tim.master_rgba[p * 4 + 0] = r;
-    tim.master_rgba[p * 4 + 1] = g;
-    tim.master_rgba[p * 4 + 2] = b;
-    tim.master_rgba[p * 4 + 3] = a;
-
-    if (!tim.master_index_map.empty()) {
-        int colors = tim.clut_header.colors_per_clut;
-        auto begin = tim.clut_data.begin() + static_cast<long>(tim.selected_clut) * colors;
-        std::vector<uint16_t> row(begin, begin + colors);
-        tim.master_index_map[p] = static_cast<uint8_t>(gfx::ImageQuantizer::NearestPaletteIndex(row, r, g, b, a));
-    }
-}
-
-void ImageEditorPanel::DrawLineMaster(TIM_Image& tim, int x0, int y0, int x1, int y1, bool erase) {
-    int dx = std::abs(x1 - x0), sx = x1 >= x0 ? 1 : -1;
-    int dy = -std::abs(y1 - y0), sy = y1 >= y0 ? 1 : -1;
-    int err = dx + dy;
-    int x = x0, y = y0;
-    while (true) {
-        PaintMasterPixel(tim, x, y, erase);
-        if (x == x1 && y == y1) break;
-        int e2 = 2 * err;
-        if (e2 >= dy) { err += dy; x += sx; }
-        if (e2 <= dx) { err += dx; y += sy; }
-    }
-}
-
-void ImageEditorPanel::FillRectMaster(TIM_Image& tim, int x0, int y0, int x1, int y1, bool filled, bool erase) {
-    int lo_x = std::min(x0, x1), hi_x = std::max(x0, x1);
-    int lo_y = std::min(y0, y1), hi_y = std::max(y0, y1);
-    if (filled) {
-        for (int y = lo_y; y <= hi_y; y++) {
-            for (int x = lo_x; x <= hi_x; x++) PaintMasterPixel(tim, x, y, erase);
-        }
-    } else {
-        for (int x = lo_x; x <= hi_x; x++) {
-            PaintMasterPixel(tim, x, lo_y, erase);
-            PaintMasterPixel(tim, x, hi_y, erase);
-        }
-        for (int y = lo_y; y <= hi_y; y++) {
-            PaintMasterPixel(tim, lo_x, y, erase);
-            PaintMasterPixel(tim, hi_x, y, erase);
-        }
-    }
-}
-
-void ImageEditorPanel::FloodFillMaster(TIM_Image& tim, int px, int py) {
-    int w = tim.master_width, h = tim.image_header.height;
-    if (px < 0 || py < 0 || px >= w || py >= h) return;
-
-    // An active selection clips the flood fill to its bounds (like any
-    // other paint tool is already implicitly bounded by where you click/
-    // drag) - flood fill is the one tool that would otherwise ignore it
-    // entirely and spread across the whole canvas.
-    int lo_x = 0, hi_x = w - 1, lo_y = 0, hi_y = h - 1;
-    if (has_selection) {
-        lo_x = std::max(0, std::min(sel_x0, sel_x1));
-        hi_x = std::min(w - 1, std::max(sel_x0, sel_x1));
-        lo_y = std::max(0, std::min(sel_y0, sel_y1));
-        hi_y = std::min(h - 1, std::max(sel_y0, sel_y1));
-        if (px < lo_x || px > hi_x || py < lo_y || py > hi_y) return;
-    }
-
-    size_t start = static_cast<size_t>(py) * w + px;
-    uint8_t target[4] = { tim.master_rgba[start * 4 + 0], tim.master_rgba[start * 4 + 1],
-                           tim.master_rgba[start * 4 + 2], tim.master_rgba[start * 4 + 3] };
-    uint8_t fill[4] = { static_cast<uint8_t>(draw_color[0] * 255.0f), static_cast<uint8_t>(draw_color[1] * 255.0f),
-                         static_cast<uint8_t>(draw_color[2] * 255.0f), static_cast<uint8_t>(draw_color[3] * 255.0f) };
-    if (target[0] == fill[0] && target[1] == fill[1] && target[2] == fill[2] && target[3] == fill[3]) return;
-
-    std::vector<bool> visited(static_cast<size_t>(w) * h, false);
-    std::vector<int> stack;
-    stack.push_back(py * w + px);
-    visited[start] = true;
-
-    while (!stack.empty()) {
-        int idx = stack.back();
-        stack.pop_back();
-        int x = idx % w, y = idx / w;
-        PaintMasterPixel(tim, x, y, false);
-
-        int neighbors[4][2] = { { x - 1, y }, { x + 1, y }, { x, y - 1 }, { x, y + 1 } };
-        for (auto& n : neighbors) {
-            int nx = n[0], ny = n[1];
-            if (nx < lo_x || ny < lo_y || nx > hi_x || ny > hi_y) continue;
-            size_t ni = static_cast<size_t>(ny) * w + nx;
-            if (visited[ni]) continue;
-            const uint8_t* c = &tim.master_rgba[ni * 4];
-            if (c[0] == target[0] && c[1] == target[1] && c[2] == target[2] && c[3] == target[3]) {
-                visited[ni] = true;
-                stack.push_back(ny * w + nx);
-            }
-        }
-    }
-}
-
-void ImageEditorPanel::MoveSelectionMaster(TIM_Image& tim, int dx, int dy) {
-    int w = tim.master_width, h = tim.image_header.height;
-    int lo_x = std::min(sel_x0, sel_x1), hi_x = std::max(sel_x0, sel_x1);
-    int lo_y = std::min(sel_y0, sel_y1), hi_y = std::max(sel_y0, sel_y1);
-
-    // Cut: clear the selection's original spot (tim's buffers were already
-    // reset to the pre-drag backup by the caller this frame, so this only
-    // needs to blank the rect itself, not the whole canvas).
-    for (int y = lo_y; y <= hi_y; y++) {
-        for (int x = lo_x; x <= hi_x; x++) PaintMasterPixel(tim, x, y, /*erase=*/true);
-    }
-
-    // Paste: stamp the ORIGINAL content - read from the untouched backup,
-    // not from tim itself, since tim's own copy at the source was just
-    // cleared above (and could overlap the destination for a small drag).
-    for (int y = lo_y; y <= hi_y; y++) {
-        int dst_y = y + dy;
-        if (dst_y < 0 || dst_y >= h) continue;
-        for (int x = lo_x; x <= hi_x; x++) {
-            int dst_x = x + dx;
-            if (dst_x < 0 || dst_x >= w) continue;
-            size_t src_p = static_cast<size_t>(y) * w + x;
-            size_t dst_p = static_cast<size_t>(dst_y) * w + dst_x;
-            for (int c = 0; c < 4; c++) tim.master_rgba[dst_p * 4 + c] = stroke_master_backup[src_p * 4 + c];
-            if (!tim.master_index_map.empty() && src_p < stroke_index_backup.size()) {
-                tim.master_index_map[dst_p] = stroke_index_backup[src_p];
-            }
-        }
-    }
+gfx::SelectionRect ImageEditorPanel::CurrentSelectionRect() const {
+    return { has_selection, sel_x0, sel_y0, sel_x1, sel_y1 };
 }
 
 void ImageEditorPanel::LiveUpdate(tim::Document& document, TIM_Image& tim) {

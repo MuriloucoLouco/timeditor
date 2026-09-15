@@ -67,6 +67,7 @@ set(TIMEDITOR_CORE_SOURCES
     src/gfx/tim_texture_builder.cpp
     src/gfx/image_exporter.cpp
     src/gfx/image_quantizer.cpp
+    src/gfx/raster_ops.cpp
     src/gfx/gl_ext.cpp
     src/gfx/framebuffer.cpp
     src/gfx/tmd_texture_cache.cpp
@@ -90,6 +91,7 @@ add_executable(TIMEditor
     src/ui/theme.cpp
     src/ui/inspector_panel.cpp
     src/ui/vram_panel.cpp
+    src/ui/vram_panel_draw.cpp
     src/ui/editor_app.cpp
     src/ui/palette_view.cpp
     src/ui/export_dialog.cpp
@@ -98,7 +100,10 @@ add_executable(TIMEditor
     src/ui/file_dialog.cpp
     src/ui/tmd_panel.cpp
     src/ui/tmd_raw_editor.cpp
+    src/ui/tmd_raw_editor_fields.cpp
     src/ui/model_editor_panel.cpp
+    src/ui/model_editor_input.cpp
+    src/ui/model_editor_uv.cpp
     src/ui/icon_font.cpp
     ${IMGUIZMO_DIR}/ImGuizmo.cpp
     src/ui/model_export_dialog.cpp
