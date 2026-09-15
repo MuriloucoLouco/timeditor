@@ -18,3 +18,12 @@
 #include <windows.h>
 #endif
 #include <GL/gl.h>
+
+// GL_CLAMP_TO_EDGE is core since OpenGL 1.2, but Windows' own strict GL 1.1-
+// only GL/gl.h doesn't declare it (unlike Linux/Mesa's, which does despite
+// the same nominal version) - its value is part of the stable core GL enum
+// space, safe to hardcode when missing rather than pull in a loader for one
+// constant.
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
