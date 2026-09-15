@@ -1,5 +1,5 @@
 #include "tim_texture_builder.h"
-#include <GL/gl.h>
+#include "../core/gl_compat.h"
 
 namespace gfx {
 

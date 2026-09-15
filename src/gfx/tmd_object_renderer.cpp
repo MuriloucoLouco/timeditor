@@ -1,6 +1,6 @@
 #include "tmd_object_renderer.h"
 #include "tmd_space.h"
-#include <GL/gl.h>
+#include "../core/gl_compat.h"
 #include <algorithm>
 #include <cmath>
 

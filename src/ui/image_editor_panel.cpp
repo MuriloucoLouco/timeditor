@@ -7,7 +7,7 @@
 #include "IconsFontAwesome6.h"
 #include "icon_button.h"
 #include "zoom_pan.h"
-#include <GL/gl.h>
+#include "../core/gl_compat.h"
 #include <algorithm>
 #include <cmath>
 #include <string>

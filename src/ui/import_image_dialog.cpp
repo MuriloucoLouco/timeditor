@@ -3,7 +3,7 @@
 #include "../gfx/image_quantizer.h"
 #include "../gfx/tim_texture_builder.h"
 #include "file_dialog.h"
-#include <GL/gl.h>
+#include "../core/gl_compat.h"
 #include <algorithm>
 
 #define STB_IMAGE_IMPLEMENTATION

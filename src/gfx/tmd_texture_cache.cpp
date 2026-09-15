@@ -1,5 +1,5 @@
 #include "tmd_texture_cache.h"
-#include <GL/gl.h>
+#include "../core/gl_compat.h"
 
 namespace gfx {
 

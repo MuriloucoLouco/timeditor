@@ -1,5 +1,5 @@
 #pragma once
-#include <GL/gl.h>
+#include "../core/gl_compat.h"
 
 // Framebuffer-object entry points. <GL/gl.h> on Linux only declares GL 1.1,
 // but FBOs (core since GL 3.0 / universally available as an extension

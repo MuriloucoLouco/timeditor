@@ -1,6 +1,6 @@
 #pragma once
 #include "imgui.h"
-#include <GL/gl.h>
+#include "../core/gl_compat.h"
 #include <cstdint>
 
 namespace ui {

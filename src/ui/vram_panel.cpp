@@ -2,7 +2,7 @@
 #include "splitter.h"
 #include "gl_image.h"
 #include "zoom_pan.h"
-#include <GL/gl.h>
+#include "../core/gl_compat.h"
 #include <cstdio>
 #include <cmath>
 #include <climits>

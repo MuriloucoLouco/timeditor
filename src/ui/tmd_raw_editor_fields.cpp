@@ -10,7 +10,7 @@
 #include "../gfx/tmd_object_renderer.h"
 #include "../gfx/tmd_space.h"
 #include "imgui.h"
-#include <GL/gl.h>
+#include "../core/gl_compat.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>

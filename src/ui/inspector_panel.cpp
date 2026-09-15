@@ -8,7 +8,7 @@
 #include "imgui.h"
 #include "../core/vram_manager.h"
 #include "../gfx/tim_texture_builder.h"
-#include <GL/gl.h>
+#include "../core/gl_compat.h"
 #include <string>
 #include <vector>
 #include <utility>

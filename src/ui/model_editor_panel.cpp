@@ -9,7 +9,7 @@
 #include "IconsFontAwesome6.h"
 #include "icon_button.h"
 #include "splitter.h"
-#include <GL/gl.h>
+#include "../core/gl_compat.h"
 #include <algorithm>
 #include <cmath>
 

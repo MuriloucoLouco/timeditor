@@ -1,6 +1,6 @@
 #include "framebuffer.h"
 #include "gl_ext.h"
-#include <GL/gl.h>
+#include "../core/gl_compat.h"
 
 namespace gfx {
 

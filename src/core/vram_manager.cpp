@@ -1,5 +1,5 @@
 #include "vram_manager.h"
-#include <GL/gl.h>
+#include "gl_compat.h"
 #include <algorithm>
 
 VRAMManager::VRAMManager() {

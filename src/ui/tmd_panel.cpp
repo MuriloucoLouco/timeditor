@@ -7,7 +7,7 @@
 #include "splitter.h"
 #include "text_utils.h"
 #include "imgui.h"
-#include <GL/gl.h>
+#include "../core/gl_compat.h"
 #include <algorithm>
 #include <cmath>
 
