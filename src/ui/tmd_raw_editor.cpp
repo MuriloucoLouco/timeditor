@@ -28,7 +28,15 @@ std::string SummarizePolygon(const tmd::TMD_Polygon& p) {
 void TmdRawEditor::Render(int model_index, int object_index, tmd::TMD_Object& obj, const tim::Document& document,
                            VRAMManager& vram_manager, gfx::TmdTextureCache& texture_cache,
                            const std::function<void()>& push_undo, const std::function<void()>& mark_dirty) {
-    if (model_index != last_model_index || object_index != last_object_index) {
+    // Also re-check by content size, not just index: the object's contents
+    // can change out from under this panel without going through any of
+    // its own edits (Undo/Redo, an OBJ/glTF reimport), which is the only
+    // path that otherwise keeps vertex_checked/normal_checked/
+    // primitive_checked sized to match - see the identical fix/comment in
+    // ModelEditorPanel::Render.
+    if (model_index != last_model_index || object_index != last_object_index ||
+        obj.vertices.size() != vertex_checked.size() || obj.normals.size() != normal_checked.size() ||
+        obj.polygons.size() != primitive_checked.size()) {
         checked_kind = FieldKind::None;
         vertex_checked.assign(obj.vertices.size(), false);
         normal_checked.assign(obj.normals.size(), false);

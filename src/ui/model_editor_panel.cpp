@@ -114,7 +114,19 @@ void ModelEditorPanel::SetSelectMode(SelectMode mode) {
 void ModelEditorPanel::Render(int model_index, int object_index, tmd::TMD_Object& obj, VRAMManager& vram_manager,
                                gfx::TmdTextureCache& texture_cache, const std::function<void()>& push_undo,
                                const std::function<void()>& mark_dirty) {
-    if (model_index != last_model_index || object_index != last_object_index) {
+    // The vertex/face count check (beyond just the model/object index) is
+    // needed because the object's contents can change out from under this
+    // panel without going through any of its own mesh-editing calls, which
+    // are the only place that otherwise keeps selected_vertices/faces sized
+    // to match - e.g. Undo/Redo (TmdPanel::Undo swaps the whole TMD_Object
+    // wholesale) or an OBJ/glTF reimport. Without this, a stale, wrong-sized
+    // selection bitset silently indexed out of bounds (vector<bool> gives no
+    // bounds error, just corrupts an unrelated bit) - symptoms ranged from
+    // picking a face doing nothing to it staying that way even after
+    // closing and reopening the file, since the model/object index the
+    // panel last saw never actually changed across that.
+    if (model_index != last_model_index || object_index != last_object_index ||
+        obj.vertices.size() != selected_vertices.size() || obj.polygons.size() != selected_faces.size()) {
         ResizeSelectionToObject(obj);
         last_model_index = model_index;
         last_object_index = object_index;
@@ -377,7 +389,10 @@ void ModelEditorPanel::RenderToolbar(tmd::TMD_Object& obj, const std::function<v
                 (void)r;
             });
         }
+        ImGui::EndDisabled();
+
         ImGui::SameLine();
+        ImGui::BeginDisabled(faces.empty());
         if (IconButton(ICON_FA_CLONE, "Duplicate Selected Faces")) {
             action([&] {
                 std::vector<int> verts = SelectedVertexIndices(); // empty in Face mode; gather from faces instead
