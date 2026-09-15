@@ -2,6 +2,7 @@
 #include "palette_view.h"
 #include "splitter.h"
 #include "gl_image.h"
+#include "icon_button.h"
 #include "zoom_pan.h"
 #include "text_utils.h"
 #include "imgui.h"
@@ -486,10 +487,7 @@ void InspectorPanel::RenderClutSelector(TIM_Image& tim) {
         std::string btn_label = std::to_string(c) + "##clut" + std::to_string(c);
         bool is_selected = (tim.selected_clut == c);
 
-        if (is_selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.7f, 0.4f, 1.0f));
-        ImGui::Button(btn_label.c_str());
-        if (ImGui::IsItemClicked()) tim.selected_clut = c;
-        if (is_selected) ImGui::PopStyleColor();
+        if (ui::IconButton(btn_label.c_str(), nullptr, ImVec2(0, 0), is_selected)) tim.selected_clut = c;
 
         // Manual wrap: keep placing buttons on the same line as long as the
         // next one would still fit in this (comparatively narrow) side panel.

@@ -73,6 +73,7 @@ set(TIMEDITOR_CORE_SOURCES
     src/gfx/tmd_object_renderer.cpp
     src/gfx/texture_atlas.cpp
     src/gfx/tmd_mesh_import.cpp
+    src/gfx/tmd_export_material.cpp
     src/gfx/tmd_obj_export.cpp
     src/gfx/tmd_obj_import.cpp
     src/gfx/tmd_gltf_export.cpp

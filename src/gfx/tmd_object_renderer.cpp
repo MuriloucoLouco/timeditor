@@ -1,4 +1,5 @@
 #include "tmd_object_renderer.h"
+#include "tmd_space.h"
 #include <GL/gl.h>
 #include <algorithm>
 #include <cmath>
@@ -7,9 +8,8 @@ namespace gfx::TmdObjectRenderer {
 
 namespace {
 
-// PS-X object/normal space is Y-down; negate Y once here so the (Y-up) GL
-// viewport shows things upright.
-Vec3 ToViewerSpace(int16_t x, int16_t y, int16_t z) { return { static_cast<float>(x), -static_cast<float>(y), static_cast<float>(z) }; }
+// gfx::ToViewerSpace (tmd_space.h) is visible here unqualified - this
+// namespace nests inside gfx.
 
 // Ambient 0.55 + up to 0.75 of diffuse from a fixed, pleasant three-quarter
 // light. There's no lighting setup stored in a TMD (the real GTE light

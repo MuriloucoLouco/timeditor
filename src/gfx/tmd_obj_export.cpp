@@ -1,6 +1,8 @@
 #include "tmd_obj_export.h"
 #include "stb_image_write.h"
 #include "texture_atlas.h"
+#include "tmd_export_material.h"
+#include "tmd_space.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -9,58 +11,11 @@
 
 namespace gfx::TmdObjExport {
 
+using gfx::ExportMaterial;
+using gfx::MakeMaterialKey;
+using gfx::SameMaterial;
+
 namespace {
-
-// One distinct combination of PS1-specific polygon attributes an exported
-// material stands in for - purely to group polygons for the .mtl/baked-
-// texture output. Export-only: nothing reads this back on import (see
-// tmd_mesh_import.h - reimporting always rebuilds fresh instead of trying
-// to recover the original attributes).
-struct ExportMaterial {
-    std::string name;
-    uint16_t tsb = 0;
-    uint16_t cba = 0;
-    int tile_width = 256;
-    bool textured = false;
-    bool semi_transparent = false;
-    bool color_per_vertex = false;
-    uint8_t color[4][3] = { { 128, 128, 128 }, { 128, 128, 128 }, { 128, 128, 128 }, { 128, 128, 128 } };
-};
-
-int TileWidthForTsb(uint16_t tsb) {
-    int color_mode = (tsb >> 7) & 0x3;
-    return color_mode == 0 ? 256 : color_mode == 1 ? 128 : 64;
-}
-
-ExportMaterial MakeMaterialKey(const tmd::TMD_Polygon& p) {
-    ExportMaterial m;
-    m.tsb = p.tsb;
-    m.cba = p.cba;
-    m.tile_width = p.textured ? TileWidthForTsb(p.tsb) : 256;
-    m.textured = p.textured;
-    m.semi_transparent = p.semi_transparent;
-    m.color_per_vertex = p.color_per_vertex;
-    for (int i = 0; i < 4; i++) {
-        m.color[i][0] = p.color[i][0];
-        m.color[i][1] = p.color[i][1];
-        m.color[i][2] = p.color[i][2];
-    }
-    return m;
-}
-
-bool SameMaterial(const ExportMaterial& a, const ExportMaterial& b) {
-    if (a.tsb != b.tsb || a.cba != b.cba || a.textured != b.textured || a.semi_transparent != b.semi_transparent ||
-        a.color_per_vertex != b.color_per_vertex) {
-        return false;
-    }
-    int n = a.color_per_vertex ? 4 : 1;
-    for (int i = 0; i < n; i++) {
-        if (a.color[i][0] != b.color[i][0] || a.color[i][1] != b.color[i][1] || a.color[i][2] != b.color[i][2]) {
-            return false;
-        }
-    }
-    return true;
-}
 
 // Cross product of the face's first two edges, normalized - a reasonable
 // per-face reference normal for a no_light polygon (which has no GTE
@@ -75,13 +30,17 @@ Vec3f Normalize(Vec3f v) {
     return { v.x / len, v.y / len, v.z / len };
 }
 
-// PS-X object space is Y-down; negate Y so the exported mesh looks upright
-// in a conventional Y-up DCC tool - inverted symmetrically on reimport.
+// PS-X object space is Y-down; gfx::ToExportSpace (tmd_space.h) negates Y
+// so the exported mesh looks upright in a conventional Y-up DCC tool -
+// inverted symmetrically on reimport. Thin wrappers only to keep this
+// file's local Vec3f (not gfx::Vec3) for its own Sub/Cross/Normalize above.
 Vec3f ToExportSpace(const tmd::TMD_Vertex& v) {
-    return { static_cast<float>(v.x), -static_cast<float>(v.y), static_cast<float>(v.z) };
+    gfx::Vec3 p = gfx::ToExportSpace(v);
+    return { p.x, p.y, p.z };
 }
 Vec3f ToExportSpace(const tmd::TMD_Normal& n) {
-    return { static_cast<float>(n.x), -static_cast<float>(n.y), static_cast<float>(n.z) };
+    gfx::Vec3 p = gfx::ToExportSpace(n);
+    return { p.x, p.y, p.z };
 }
 
 } // namespace
