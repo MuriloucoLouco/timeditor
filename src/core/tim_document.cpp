@@ -1,6 +1,7 @@
 #include "tim_document.h"
 #include "tim_writer.h"
 #include "vram_manager.h"
+#include "log.h"
 #include <algorithm>
 
 namespace tim {
@@ -510,7 +511,10 @@ bool Document::Save(const std::string& filepath) {
     std::vector<const TIM_Image*> to_write;
     for (int i : indices) to_write.push_back(&images[i]);
 
-    if (!Writer::WriteToFile(filepath, to_write)) return false;
+    if (!Writer::WriteToFile(filepath, to_write)) {
+        core::Log::Error("Failed to save TIM file: %s", filepath.c_str());
+        return false;
+    }
     for (int i : indices) images[i].dirty = false;
     return true;
 }
@@ -522,7 +526,10 @@ bool Document::SaveAs(const std::string& filepath, const std::string& new_filepa
     std::vector<const TIM_Image*> to_write;
     for (int i : indices) to_write.push_back(&images[i]);
 
-    if (!Writer::WriteToFile(new_filepath, to_write)) return false;
+    if (!Writer::WriteToFile(new_filepath, to_write)) {
+        core::Log::Error("Failed to save TIM file: %s", new_filepath.c_str());
+        return false;
+    }
 
     for (int i : indices) {
         images[i].filename = new_filepath;

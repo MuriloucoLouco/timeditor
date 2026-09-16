@@ -5,6 +5,7 @@
 // unmanageably long; see docs/ARCHITECTURE.md and model_editor_internal.h.
 #include "model_editor_panel.h"
 #include "model_editor_internal.h"
+#include "../gfx/gl_ext.h"
 #include "../gfx/tmd_object_renderer.h"
 #include "IconsFontAwesome6.h"
 #include "icon_button.h"
@@ -582,6 +583,7 @@ void ModelEditorPanel::RenderViewport(tmd::TMD_Object& obj, VRAMManager& vram_ma
     glDisable(GL_CULL_FACE);
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     framebuffer.Unbind();
+    gfx::gl::LogGLErrors("ModelEditorPanel::RenderViewport");
 
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
 

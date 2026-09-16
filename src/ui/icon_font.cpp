@@ -14,9 +14,13 @@ namespace {
 // matching ICON_FA_* macro at the call site) whenever a new icon is used.
 const ImWchar kIconRanges[] = {
     0xe09a, 0xe09a, // ICON_FA_ARROW_UP_FROM_BRACKET - extrude
+    0xf00d, 0xf00d, // ICON_FA_XMARK - toast dismiss button
     0xf030, 0xf030, // ICON_FA_CAMERA - view presets
     0xf047, 0xf047, // ICON_FA_ARROWS_UP_DOWN_LEFT_RIGHT - move
+    0xf057, 0xf057, // ICON_FA_CIRCLE_XMARK - log/toast error level
+    0xf05a, 0xf05a, // ICON_FA_CIRCLE_INFO - log/toast info level
     0xf065, 0xf065, // ICON_FA_EXPAND - scale
+    0xf071, 0xf071, // ICON_FA_TRIANGLE_EXCLAMATION - log/toast warning level
     0xf0d0, 0xf0d0, // ICON_FA_WAND_MAGIC - recalculate normal
     0xf12d, 0xf12d, // ICON_FA_ERASER - image editor eraser tool
     0xf192, 0xf192, // ICON_FA_CIRCLE_DOT - vertex select

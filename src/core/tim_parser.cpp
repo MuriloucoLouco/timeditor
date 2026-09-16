@@ -1,11 +1,15 @@
 #include "tim_parser.h"
+#include "log.h"
 #include <cstdio>
 
 namespace tim {
 
 bool Parser::LoadFromFile(const std::string& filepath, std::vector<TIM_Image>& out_images) {
     FILE* file = fopen(filepath.c_str(), "rb");
-    if (!file) return false;
+    if (!file) {
+        core::Log::Error("Could not open TIM file: %s", filepath.c_str());
+        return false;
+    }
 
     int byte;
     int index_counter = 0;
@@ -31,7 +35,11 @@ bool Parser::LoadFromFile(const std::string& filepath, std::vector<TIM_Image>& o
     }
 
     fclose(file);
-    return !out_images.empty();
+    if (out_images.empty()) {
+        core::Log::Error("No valid TIM image found in %s - not a TIM file, or it's corrupted.", filepath.c_str());
+        return false;
+    }
+    return true;
 }
 
 bool Parser::ReadOneImage(FILE* file, int file_index, const std::string& filepath, TIM_Image& img) {

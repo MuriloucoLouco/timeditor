@@ -1,6 +1,7 @@
 #include "tmd_document.h"
 #include "tmd_parser.h"
 #include "tmd_writer.h"
+#include "log.h"
 
 namespace tmd {
 
@@ -113,7 +114,10 @@ void TmdDocument::Redo() {
 bool TmdDocument::SaveActiveModel() {
     if (!HasActiveModel()) return false;
     LoadedModel& loaded = models[active_model];
-    if (!Writer::WriteToFile(loaded.model.filename, loaded.model)) return false;
+    if (!Writer::WriteToFile(loaded.model.filename, loaded.model)) {
+        core::Log::Error("Failed to save TMD file: %s", loaded.model.filename.c_str());
+        return false;
+    }
     loaded.dirty = false;
     return true;
 }
@@ -121,7 +125,10 @@ bool TmdDocument::SaveActiveModel() {
 bool TmdDocument::SaveActiveModelAs(const std::string& new_path) {
     if (!HasActiveModel()) return false;
     LoadedModel& loaded = models[active_model];
-    if (!Writer::WriteToFile(new_path, loaded.model)) return false;
+    if (!Writer::WriteToFile(new_path, loaded.model)) {
+        core::Log::Error("Failed to save TMD file: %s", new_path.c_str());
+        return false;
+    }
     loaded.model.filename = new_path;
     loaded.dirty = false;
     return true;
@@ -136,8 +143,11 @@ bool TmdDocument::AnyModelDirty() const {
 
 void TmdDocument::SaveAllDirtyModels() {
     for (auto& loaded : models) {
-        if (loaded.dirty && Writer::WriteToFile(loaded.model.filename, loaded.model)) {
+        if (!loaded.dirty) continue;
+        if (Writer::WriteToFile(loaded.model.filename, loaded.model)) {
             loaded.dirty = false;
+        } else {
+            core::Log::Error("Failed to save TMD file: %s", loaded.model.filename.c_str());
         }
     }
 }

@@ -1,6 +1,7 @@
 #include "tmd_panel.h"
 #include "../core/tmd_writer.h"
 #include "../gfx/tmd_obj_import.h"
+#include "../gfx/gl_ext.h"
 #include "../gfx/tmd_object_renderer.h"
 #include "../gfx/tmd_space.h"
 #include "file_dialog.h"
@@ -485,6 +486,7 @@ void TmdPanel::RenderViewport(VRAMManager& vram_manager) {
     glDisable(GL_CULL_FACE);
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); // wireframe must never leak into ImGui's own rendering
     framebuffer.Unbind();
+    gfx::gl::LogGLErrors("TmdPanel::RenderViewport");
 }
 
 void TmdPanel::DrawModel(const LoadedModel& loaded, VRAMManager& vram_manager) {

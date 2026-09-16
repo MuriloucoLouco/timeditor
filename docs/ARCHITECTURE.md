@@ -143,6 +143,26 @@ wrong-sized `std::vector<bool>` selection silently indexes out of bounds
 rather than throwing, so this has to be checked proactively rather than
 relying on it to fail loudly.
 
+## Logging and error reporting
+
+`core::Log` (`core/log.h`) is a small process-wide log every layer can call
+into - `core` and `gfx` for things like a failed file load/save or a GL
+setup problem the driver didn't crash on, `ui` for anything UI-specific.
+Every `Info`/`Warning`/`Error` call appends to an in-memory history (always
+echoed to stderr too, and to a `timeditor.log` file next to the executable
+once `main.cpp` calls `Log::Init` at startup) so a bug report doesn't
+require the reporter to have launched the app from a terminal in the first
+place.
+
+`ui::LogPanel` is the only consumer of that history: `RenderWindow` shows
+the full log in a normal window (`View > Log...`, which also shows a live
+warning/error count so a problem doesn't go unnoticed just because the
+window is closed), and `RenderToasts` pops up a transient, auto-dismissing
+alert for each new Warning/Error (not Info - those would make routine
+startup logging read as an alert) so something going wrong is visible on
+screen the moment it happens, not just in a file someone has to think to
+check.
+
 ## Vendored dependencies
 
 Every third-party dependency lives under `third_party/` as a git submodule

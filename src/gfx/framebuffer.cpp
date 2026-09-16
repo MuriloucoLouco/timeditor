@@ -1,7 +1,7 @@
 #include "framebuffer.h"
 #include "gl_ext.h"
 #include "../core/gl_compat.h"
-#include <cstdio>
+#include "../core/log.h"
 
 namespace gfx {
 
@@ -71,8 +71,8 @@ void Framebuffer::EnsureSize(int new_width, int new_height) {
 
     GLenum status = gl::CheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE) {
-        std::fprintf(stderr, "[GL] 3D viewport framebuffer is incomplete (0x%04X: %s) - it will render blank.\n",
-                     status, FramebufferStatusName(status));
+        core::Log::Error("3D viewport framebuffer is incomplete (0x%04X: %s) - it will render blank.", status,
+                          FramebufferStatusName(status));
     }
 
     gl::BindFramebuffer(GL_FRAMEBUFFER, 0);

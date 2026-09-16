@@ -1,6 +1,6 @@
 #include "gl_ext.h"
+#include "../core/log.h"
 #include <GLFW/glfw3.h>
-#include <cstdio>
 
 namespace gfx::gl {
 
@@ -23,7 +23,7 @@ namespace {
 template <typename ProcT>
 ProcT Load(const char* name) {
     ProcT ptr = reinterpret_cast<ProcT>(glfwGetProcAddress(name));
-    if (!ptr) std::fprintf(stderr, "[GL] Failed to resolve extension function: %s\n", name);
+    if (!ptr) core::Log::Error("Failed to resolve GL extension function: %s", name);
     return ptr;
 }
 } // namespace
@@ -43,9 +43,28 @@ void LoadGLExtensions() {
     if (!GenFramebuffers || !BindFramebuffer || !FramebufferTexture2D || !GenRenderbuffers ||
         !BindRenderbuffer || !RenderbufferStorage || !FramebufferRenderbuffer || !CheckFramebufferStatus ||
         !DeleteFramebuffers || !DeleteRenderbuffers) {
-        std::fprintf(stderr,
-                      "[GL] One or more framebuffer-object functions are unavailable - the 3D viewport "
-                      "will not render.\n");
+        core::Log::Error("One or more framebuffer-object functions are unavailable - the 3D viewport will not "
+                          "render.");
+    }
+}
+
+namespace {
+const char* ErrorName(GLenum err) {
+    switch (err) {
+        case GL_INVALID_ENUM: return "GL_INVALID_ENUM";
+        case GL_INVALID_VALUE: return "GL_INVALID_VALUE";
+        case GL_INVALID_OPERATION: return "GL_INVALID_OPERATION";
+        case GL_STACK_OVERFLOW: return "GL_STACK_OVERFLOW";
+        case GL_STACK_UNDERFLOW: return "GL_STACK_UNDERFLOW";
+        case GL_OUT_OF_MEMORY: return "GL_OUT_OF_MEMORY";
+        default: return "unknown error";
+    }
+}
+} // namespace
+
+void LogGLErrors(const char* where) {
+    for (GLenum err = glGetError(); err != GL_NO_ERROR; err = glGetError()) {
+        core::Log::Error("GL error at %s: 0x%04X (%s)", where, err, ErrorName(err));
     }
 }
 

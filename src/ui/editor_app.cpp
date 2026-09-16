@@ -1,11 +1,14 @@
 #include "editor_app.h"
 #include "theme.h"
 #include "imgui.h"
+#include "../core/log.h"
 #include "../core/tim_parser.h"
 #include "../gfx/tim_texture_builder.h"
 #include "../gfx/gl_ext.h"
 #include "file_dialog.h"
+#include "log_panel.h"
 #include <cctype>
+#include <cstdio>
 #include <set>
 
 namespace ui {
@@ -195,6 +198,8 @@ void EditorApp::RenderFrame() {
     export_dialog.Render(document);
     RenderExitConfirmPopup();
     RenderWorkspace();
+    LogPanel::RenderWindow(&show_log_window);
+    LogPanel::RenderToasts();
 }
 
 void EditorApp::RenderMenu() {
@@ -263,6 +268,23 @@ void EditorApp::RenderMenu() {
             if (ImGui::MenuItem("Export Model...", nullptr, false, tmd_panel.HasActiveModel())) {
                 tmd_panel.OpenExportDialog();
             }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("View")) {
+            int warnings = 0, errors = 0;
+            for (const auto& entry : core::Log::History()) {
+                if (entry.level == core::Log::Level::Warning) warnings++;
+                else if (entry.level == core::Log::Level::Error) errors++;
+            }
+            char label[64];
+            if (errors || warnings) {
+                snprintf(label, sizeof(label), "Log... (%d error%s, %d warning%s)", errors, errors == 1 ? "" : "s",
+                         warnings, warnings == 1 ? "" : "s");
+            } else {
+                snprintf(label, sizeof(label), "Log...");
+            }
+            if (ImGui::MenuItem(label, nullptr, show_log_window)) show_log_window = !show_log_window;
             ImGui::EndMenu();
         }
 

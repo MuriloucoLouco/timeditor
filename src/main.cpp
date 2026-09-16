@@ -2,29 +2,41 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
-#include <cstdio>
 #include "core/gl_compat.h"
+#include "core/log.h"
 #include "ui/editor_app.h"
 #include "ui/icon_font.h"
+#include "ui/log_panel.h"
 
 int main(int argc, char** argv) {
-    if (!glfwInit()) return -1;
+    // Relative to the current working directory, which is the exe's own
+    // folder for both a Linux terminal launch from that folder and a
+    // Windows double-click - see core/log.h. This is the file to grab when
+    // asking someone to send you a repro, without needing them to run from
+    // a terminal at all.
+    core::Log::Init("timeditor.log");
+
+    if (!glfwInit()) {
+        core::Log::Error("glfwInit() failed - no usable OpenGL context could be created.");
+        return -1;
+    }
 
     GLFWwindow* window = glfwCreateWindow(1280, 720, "TIM Editor", NULL, NULL);
     if (!window) {
+        core::Log::Error("glfwCreateWindow() failed.");
         glfwTerminate();
         return -1;
     }
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
 
-    // Printed unconditionally (not just on failure) since the whole point is
+    // Logged unconditionally (not just on failure) since the whole point is
     // to tell driver/VM setups apart when the 3D viewport misbehaves without
     // crashing - see docs/ARCHITECTURE.md and gfx::gl::LoadGLExtensions().
-    std::fprintf(stderr, "[GL] Vendor:   %s\n", glGetString(GL_VENDOR));
-    std::fprintf(stderr, "[GL] Renderer: %s\n", glGetString(GL_RENDERER));
-    std::fprintf(stderr, "[GL] Version:  %s\n", glGetString(GL_VERSION));
-    std::fprintf(stderr, "[GL] GLSL:     %s\n", glGetString(GL_SHADING_LANGUAGE_VERSION));
+    core::Log::Info("GL Vendor:   %s", glGetString(GL_VENDOR));
+    core::Log::Info("GL Renderer: %s", glGetString(GL_RENDERER));
+    core::Log::Info("GL Version:  %s", glGetString(GL_VERSION));
+    core::Log::Info("GL GLSL:     %s", glGetString(GL_SHADING_LANGUAGE_VERSION));
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();

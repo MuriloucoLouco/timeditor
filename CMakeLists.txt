@@ -57,6 +57,7 @@ add_compile_definitions(IMGUI_DEFINE_MATH_OPERATORS)
 # the tests/ suite link the same compiled objects instead of recompiling
 # them twice.
 set(TIMEDITOR_CORE_SOURCES
+    src/core/log.cpp
     src/core/tim_parser.cpp
     src/core/tim_document.cpp
     src/core/tim_writer.cpp
@@ -99,6 +100,7 @@ add_executable(TIMEditor
     src/ui/import_image_dialog.cpp
     src/ui/image_editor_panel.cpp
     src/ui/file_dialog.cpp
+    src/ui/log_panel.cpp
     src/ui/tmd_panel.cpp
     src/ui/tmd_raw_editor.cpp
     src/ui/tmd_raw_editor_fields.cpp

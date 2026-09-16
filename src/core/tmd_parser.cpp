@@ -1,5 +1,6 @@
 #include "tmd_parser.h"
 #include "tmd_bits.h"
+#include "log.h"
 #include <cstdio>
 #include <vector>
 
@@ -143,24 +144,34 @@ void DecodePolygon(Cursor& body, uint8_t mode, uint8_t flag, TMD_Polygon& poly) 
 
 bool Parser::LoadFromFile(const std::string& filepath, TMD_Model& out_model) {
     FILE* file = fopen(filepath.c_str(), "rb");
-    if (!file) return false;
+    if (!file) {
+        core::Log::Error("Could not open TMD file: %s", filepath.c_str());
+        return false;
+    }
 
     fseek(file, 0, SEEK_END);
     long file_size = ftell(file);
     fseek(file, 0, SEEK_SET);
     if (file_size < 12) {
         fclose(file);
+        core::Log::Error("%s is too small to be a valid TMD file.", filepath.c_str());
         return false;
     }
 
     std::vector<uint8_t> bytes(static_cast<size_t>(file_size));
     size_t read = fread(bytes.data(), 1, bytes.size(), file);
     fclose(file);
-    if (read != bytes.size()) return false;
+    if (read != bytes.size()) {
+        core::Log::Error("Failed reading %s (only got %zu of %zu bytes).", filepath.c_str(), read, bytes.size());
+        return false;
+    }
 
     Cursor header{ bytes.data(), bytes.size(), 0 };
     uint32_t id = header.U32();
-    if (id != 0x00000041) return false;
+    if (id != 0x00000041) {
+        core::Log::Error("%s is not a TMD file (bad signature).", filepath.c_str());
+        return false;
+    }
 
     uint32_t flag = header.U32();
     uint32_t nobjs = header.U32();

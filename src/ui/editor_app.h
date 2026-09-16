@@ -42,6 +42,7 @@ private:
     bool open_exit_confirm = false;
     bool switch_to_vram_tab = false;
     bool switch_to_tim_tab = false;
+    bool show_log_window = false;
     WorkspaceTab active_tab = WorkspaceTab::TimInspector;
 
     void RenderMenu();

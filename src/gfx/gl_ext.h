@@ -44,4 +44,12 @@ extern PFNGLDELETERENDERBUFFERSPROC DeleteRenderbuffers;
 // after glfwMakeContextCurrent, before any Framebuffer is used.
 void LoadGLExtensions();
 
+// Drains glGetError() (it only reports one error at a time, and calling it
+// clears that one) and logs each distinct error found to stderr, prefixed
+// with `where`. A no-op build away from every draw call, so call it around
+// a batch of calls (e.g. everything between a Framebuffer's Bind/Unbind)
+// when something silently fails to render, rather than sprinkling it
+// everywhere permanently.
+void LogGLErrors(const char* where);
+
 } // namespace gfx::gl
