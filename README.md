@@ -24,43 +24,54 @@ files, built with Dear ImGui + GLFW + OpenGL.
 
 ## Building
 
-Requires CMake 3.15+, a C++17 compiler, OpenGL, and GLFW3.
+First, get the source with its submodules (every third-party dependency
+under `third_party/` is vendored this way - see `docs/ARCHITECTURE.md` for
+the full list and why each one is there):
 
 ```sh
-git clone --recurse-submodules <this repo's URL>
-# already cloned without submodules? run:
+git clone --recurse-submodules https://github.com/MuriloucoLouco/timeditor
+cd timeditor
+# already cloned without submodules? run instead:
 git submodule update --init --recursive
 ```
 
+Then follow whichever OS section below applies.
+
 ### Linux
 
-```sh
-sudo apt install libglfw3-dev
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . -j$(nproc)
-```
+1. Install a compiler, CMake, and GLFW3 (Debian/Ubuntu):
+   ```sh
+   sudo apt install build-essential cmake libglfw3-dev
+   ```
+2. Configure and build:
+   ```sh
+   mkdir build && cd build
+   cmake .. -DCMAKE_BUILD_TYPE=Release
+   cmake --build . -j$(nproc)
+   ```
 
-Produces `build/TIMEditor`.
+This produces `build/TIMEditor`.
 
 ### Windows
 
-GLFW3 isn't vendored, so grab it via
-[vcpkg](https://github.com/microsoft/vcpkg), from a Developer Command Prompt /
-PowerShell:
+1. Install a C++ compiler and CMake, for example via Visual Studio.
+2. Install [vcpkg](https://github.com/microsoft/vcpkg) to install GLFW3:
+   ```powershell
+   git clone https://github.com/microsoft/vcpkg C:\vcpkg
+   C:\vcpkg\bootstrap-vcpkg.bat
+   C:\vcpkg\vcpkg.exe install glfw3:x64-windows
+   ```
+3. Configure and build:
+   ```powershell
+   cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows
+   cmake --build build --config Release -j
+   ```
+4. Copy the one runtime dependency GLFW needs alongside the exe:
+   ```powershell
+   copy C:\vcpkg\installed\x64-windows\bin\glfw3.dll build\Release\
+   ```
 
-```powershell
-vcpkg install glfw3:x64-windows
-
-cmake -B build -S . `
-  -DCMAKE_TOOLCHAIN_FILE="<vcpkg-root>/scripts/buildsystems/vcpkg.cmake" `
-  -DVCPKG_TARGET_TRIPLET=x64-windows
-cmake --build build --config Release -j
-
-copy "<vcpkg-root>\installed\x64-windows\bin\glfw3.dll" build\Release\
-```
-
-Produces `build/Release/TIMEditor.exe` (OpenGL itself comes from Windows).
+This produces `build/Release/TIMEditor.exe`.
 
 ### Tests
 
