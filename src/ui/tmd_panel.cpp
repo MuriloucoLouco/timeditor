@@ -478,6 +478,34 @@ void TmdPanel::RenderViewport(VRAMManager& vram_manager) {
     glMatrixMode(GL_MODELVIEW);
     glLoadMatrixf(view.m);
 
+    // --- TEMP DIAGNOSTIC - remove once the VirtualBox "nothing renders"
+    // bug is found. Draws a big magenta triangle directly in clip space
+    // (identity matrices), independent of the camera/model data, to tell
+    // apart "immediate-mode drawing into this FBO doesn't work at all on
+    // this driver" from "something specific to DrawObject's state/data".
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+    glBegin(GL_TRIANGLES);
+    glColor4ub(255, 0, 255, 255);
+    glVertex3f(-0.5f, -0.5f, 0.0f);
+    glVertex3f(0.5f, -0.5f, 0.0f);
+    glVertex3f(0.0f, 0.5f, 0.0f);
+    glEnd();
+    glEnable(GL_DEPTH_TEST);
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+    // --- END TEMP DIAGNOSTIC ---
+
     if (doc.HasActiveModel()) {
         DrawModel(doc.Models()[doc.ActiveModel()], vram_manager);
     }
