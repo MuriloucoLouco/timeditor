@@ -27,3 +27,9 @@
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
 #endif
+
+// Same story for GL_SHADING_LANGUAGE_VERSION (core since GL 2.0) - used by
+// main.cpp's startup GL-info log.
+#ifndef GL_SHADING_LANGUAGE_VERSION
+#define GL_SHADING_LANGUAGE_VERSION 0x8B8C
+#endif

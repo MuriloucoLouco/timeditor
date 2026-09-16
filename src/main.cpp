@@ -3,6 +3,7 @@
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
 #include <cstdio>
+#include "core/gl_compat.h"
 #include "ui/editor_app.h"
 #include "ui/icon_font.h"
 
