@@ -11,7 +11,9 @@ public:
     ~Framebuffer();
 
     // (Re)allocates the FBO's attachments if `width`/`height` changed (or on
-    // first use). Safe to call every frame.
+    // first use). Safe to call every frame. Logs to stderr (once per size
+    // change) if the resulting FBO is incomplete - the viewport would then
+    // render as blank with no other visible symptom.
     void EnsureSize(int width, int height);
 
     void Bind();   // Also sets the GL viewport to the framebuffer's size.

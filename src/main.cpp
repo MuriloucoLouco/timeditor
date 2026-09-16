@@ -2,6 +2,7 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
+#include <cstdio>
 #include "nfd.h"
 #include "ui/editor_app.h"
 #include "ui/icon_font.h"
@@ -17,6 +18,14 @@ int main(int argc, char** argv) {
     }
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
+
+    // Printed unconditionally (not just on failure) since the whole point is
+    // to tell driver/VM setups apart when the 3D viewport misbehaves without
+    // crashing - see docs/ARCHITECTURE.md and gfx::gl::LoadGLExtensions().
+    std::fprintf(stderr, "[GL] Vendor:   %s\n", glGetString(GL_VENDOR));
+    std::fprintf(stderr, "[GL] Renderer: %s\n", glGetString(GL_RENDERER));
+    std::fprintf(stderr, "[GL] Version:  %s\n", glGetString(GL_VERSION));
+    std::fprintf(stderr, "[GL] GLSL:     %s\n", glGetString(GL_SHADING_LANGUAGE_VERSION));
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
