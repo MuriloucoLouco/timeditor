@@ -82,6 +82,14 @@ ctest --output-on-failure
 
 Disable with `-DTIMEDITOR_BUILD_TESTS=OFF`.
 
+### Running in a VM
+
+VirtualBox's SVGA3D on Windows may fail with OpenGL. Swap in Mesa's own
+software renderer instead of the VM's passthrough driver. You may download
+the x64 release build from https://github.com/pal1000/mesa-dist-win/releases.
+From the archive, copy `opengl32.dll` and `libgallium_wgl.dll` into the
+same folder as `TIMEditor.exe`.
+
 ## Architecture
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for layering, document
