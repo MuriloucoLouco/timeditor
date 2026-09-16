@@ -2,15 +2,18 @@
 #include <string>
 #include <vector>
 
-// Thin synchronous wrapper around nativefiledialog-extended, matching the
-// small subset of dialog shapes this app needs (single/multi file open,
-// save, folder pick). NFD_Init()/NFD_Quit() bracket the whole process (see
-// main.cpp) - nothing here needs to call them.
+// Thin synchronous wrapper around tinyfiledialogs, matching the small
+// subset of dialog shapes this app needs (single/multi file open, save,
+// folder pick). No init/shutdown call is needed.
 namespace ui::FileDialog {
 
 // name: label shown next to the filter in the dialog's type dropdown (e.g.
 // "Image Files"). spec: comma-separated extensions with no dots or
-// wildcards (e.g. "png,jpg,jpeg").
+// wildcards (e.g. "png,jpg,jpeg"). Every call site here only ever passes a
+// single Filter - tinyfiledialogs itself only supports one filter group
+// (one description, one pattern list) per dialog, unlike NFD's several
+// independently selectable ones, so multiple entries in this vector get
+// flattened into one "name1/name2" description covering all their patterns.
 struct Filter {
     const char* name;
     const char* spec;

@@ -1,109 +1,90 @@
 #include "file_dialog.h"
-#include "nfd.h"
+#include "tinyfiledialogs.h"
 
 namespace ui::FileDialog {
 
 namespace {
 
-std::vector<nfdu8filteritem_t> ToNfdFilters(const std::vector<Filter>& filters) {
-    std::vector<nfdu8filteritem_t> out;
-    out.reserve(filters.size());
-    for (const auto& f : filters) out.push_back({ f.name, f.spec });
+// Flattens this app's `{name, "ext1,ext2"}` filters into tinyfiledialogs'
+// shape - see the comment on Filter in file_dialog.h for why they collapse
+// into one description/pattern list.
+struct TinyFdFilters {
+    std::vector<std::string> pattern_storage;
+    std::vector<const char*> patterns;
+    std::string description;
+};
+
+TinyFdFilters ToTinyFdFilters(const std::vector<Filter>& filters) {
+    TinyFdFilters out;
+    for (const auto& f : filters) {
+        if (!out.description.empty()) out.description += "/";
+        out.description += f.name;
+
+        std::string spec = f.spec;
+        size_t start = 0;
+        while (start <= spec.size()) {
+            size_t comma = spec.find(',', start);
+            size_t len = comma == std::string::npos ? std::string::npos : comma - start;
+            std::string ext = spec.substr(start, len);
+            if (!ext.empty()) out.pattern_storage.push_back("*." + ext);
+            if (comma == std::string::npos) break;
+            start = comma + 1;
+        }
+    }
+    // pattern_storage is done growing by this point, so these c_str()
+    // pointers stay valid for the rest of this struct's lifetime.
+    for (const auto& p : out.pattern_storage) out.patterns.push_back(p.c_str());
     return out;
 }
 
-void SplitDirAndName(const std::string& path, std::string& dir, std::string& name) {
-    size_t slash = path.find_last_of("/\\");
-    if (slash == std::string::npos) {
-        dir.clear();
-        name = path;
-    } else {
-        dir = path.substr(0, slash);
-        name = path.substr(slash + 1);
-    }
-}
+std::string SafeString(const char* s) { return s ? s : std::string(); }
 
 } // namespace
 
 std::string OpenFile(const char* title, const std::vector<Filter>& filters, const std::string& default_path) {
-    std::vector<nfdu8filteritem_t> nfd_filters = ToNfdFilters(filters);
-
-    nfdopendialogu8args_t args = {};
-    args.filterList = nfd_filters.empty() ? nullptr : nfd_filters.data();
-    args.filterCount = static_cast<nfdfiltersize_t>(nfd_filters.size());
-    args.defaultPath = default_path.empty() ? nullptr : default_path.c_str();
-    args.title = title;
-
-    nfdu8char_t* out_path = nullptr;
-    std::string result;
-    if (NFD_OpenDialogU8_With(&out_path, &args) == NFD_OKAY) {
-        result = out_path;
-        NFD_FreePathU8(out_path);
-    }
-    return result;
+    TinyFdFilters f = ToTinyFdFilters(filters);
+    const char* result =
+        tinyfd_openFileDialog(title, default_path.c_str(), static_cast<int>(f.patterns.size()),
+                               f.patterns.empty() ? nullptr : f.patterns.data(),
+                               f.description.empty() ? nullptr : f.description.c_str(), 0);
+    return SafeString(result);
 }
 
 std::vector<std::string> OpenFiles(const char* title, const std::vector<Filter>& filters,
                                     const std::string& default_path) {
-    std::vector<nfdu8filteritem_t> nfd_filters = ToNfdFilters(filters);
+    TinyFdFilters f = ToTinyFdFilters(filters);
+    const char* result =
+        tinyfd_openFileDialog(title, default_path.c_str(), static_cast<int>(f.patterns.size()),
+                               f.patterns.empty() ? nullptr : f.patterns.data(),
+                               f.description.empty() ? nullptr : f.description.c_str(), 1);
+    std::vector<std::string> out;
+    if (!result) return out;
 
-    nfdopendialogu8args_t args = {};
-    args.filterList = nfd_filters.empty() ? nullptr : nfd_filters.data();
-    args.filterCount = static_cast<nfdfiltersize_t>(nfd_filters.size());
-    args.defaultPath = default_path.empty() ? nullptr : default_path.c_str();
-    args.title = title;
-
-    std::vector<std::string> results;
-    const nfdpathset_t* paths = nullptr;
-    if (NFD_OpenDialogMultipleU8_With(&paths, &args) != NFD_OKAY) return results;
-
-    nfdpathsetsize_t count = 0;
-    NFD_PathSet_GetCount(paths, &count);
-    for (nfdpathsetsize_t i = 0; i < count; i++) {
-        nfdu8char_t* path = nullptr;
-        if (NFD_PathSet_GetPathU8(paths, i, &path) == NFD_OKAY) {
-            results.emplace_back(path);
-            NFD_PathSet_FreePathU8(path);
-        }
+    // Multiple selections come back as one '|'-separated string.
+    std::string joined = result;
+    size_t start = 0;
+    while (start <= joined.size()) {
+        size_t bar = joined.find('|', start);
+        size_t len = bar == std::string::npos ? std::string::npos : bar - start;
+        out.push_back(joined.substr(start, len));
+        if (bar == std::string::npos) break;
+        start = bar + 1;
     }
-    NFD_PathSet_Free(paths);
-    return results;
+    return out;
 }
 
 std::string SaveFile(const char* title, const std::vector<Filter>& filters, const std::string& existing_path) {
-    std::vector<nfdu8filteritem_t> nfd_filters = ToNfdFilters(filters);
-
-    std::string dir, name;
-    SplitDirAndName(existing_path, dir, name);
-
-    nfdsavedialogu8args_t args = {};
-    args.filterList = nfd_filters.empty() ? nullptr : nfd_filters.data();
-    args.filterCount = static_cast<nfdfiltersize_t>(nfd_filters.size());
-    args.defaultPath = dir.empty() ? nullptr : dir.c_str();
-    args.defaultName = name.empty() ? nullptr : name.c_str();
-    args.title = title;
-
-    nfdu8char_t* out_path = nullptr;
-    std::string result;
-    if (NFD_SaveDialogU8_With(&out_path, &args) == NFD_OKAY) {
-        result = out_path;
-        NFD_FreePathU8(out_path);
-    }
-    return result;
+    TinyFdFilters f = ToTinyFdFilters(filters);
+    const char* result =
+        tinyfd_saveFileDialog(title, existing_path.c_str(), static_cast<int>(f.patterns.size()),
+                               f.patterns.empty() ? nullptr : f.patterns.data(),
+                               f.description.empty() ? nullptr : f.description.c_str());
+    return SafeString(result);
 }
 
 std::string PickFolder(const char* title, const std::string& default_path) {
-    nfdpickfolderu8args_t args = {};
-    args.defaultPath = default_path.empty() ? nullptr : default_path.c_str();
-    args.title = title;
-
-    nfdu8char_t* out_path = nullptr;
-    std::string result;
-    if (NFD_PickFolderU8_With(&out_path, &args) == NFD_OKAY) {
-        result = out_path;
-        NFD_FreePathU8(out_path);
-    }
-    return result;
+    const char* result = tinyfd_selectFolderDialog(title, default_path.c_str());
+    return SafeString(result);
 }
 
 } // namespace ui::FileDialog

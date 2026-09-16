@@ -1,89 +1,78 @@
 # TIMEditor
 
 A desktop editor for PlayStation 1 **TIM** (image) and **TMD** (3D model)
-files, built with Dear ImGui + GLFW + OpenGL as an immediate-mode desktop
-app. It emulates enough of the PS1's VRAM addressing model that a model's
-textures are shown exactly the way the real hardware would resolve them -
-place a TIM image and its CLUT somewhere in VRAM, and any TMD polygon whose
-texpage/CLUT fields point there picks it up automatically, same as on
-console.
+files, built with Dear ImGui + GLFW + OpenGL.
 
 ## Features
 
-- **TIM Editor** - load, inspect, and edit `.tim` image files: view/switch
-  CLUTs, edit pixels and palette colors directly, add/remove palette rows,
-  switch BPP mode, import/export images, undo/redo.
-- **VRAM Viewer** - a scrollable/zoomable view of the emulated 1024x512-word
-  VRAM buffer, with every loaded TIM's image and CLUT block drawn as an
-  overlay. Click to select, drag to move (snaps to the TPage grid and to
-  other TIMs), arrow keys to nudge, overlapping regions are flagged, and a
-  display-buffer preset overlay shows common PS1 framebuffer footprints so
-  placing a texture over the frame buffer is a visible mistake instead of a
-  silent VRAM collision.
-- **TMD Editor** - load and edit `.tmd` model files, addressing VRAM through
-  the same shared `VRAMManager` as the TIM Editor:
-  - **3D View** - a read-only, textured/lit preview of every loaded model,
-    with a per-object placement transform (position/rotation/scale - not
-    stored in the file, just a viewer convenience) and an orbit + WASD fly
-    camera.
-  - **Model Editor** - a real interactive mesh editor: select vertices,
-    edges, or faces; move/rotate/scale the selection with an on-screen
-    gizmo; extrude, merge, duplicate, flip/recalculate normals, delete; a
-    tile-scoped UV workspace for texture mapping.
-  - **Raw Editor** - a field-level, checkbox-driven tree of one object's
-    vertices/normals/primitives, with single-item and batch editors, a
-    per-primitive UV preview, and a highlighted 3D preview of whichever
-    primitive is selected.
-  - OBJ and glTF import/export for taking geometry out to (and back from) a
-    conventional 3D modeling tool - see `docs/ARCHITECTURE.md` for the
-    documented, intentional limits of that round-trip.
-- Undo/redo, independently on the TIM side and the TMD side.
+- **TIM Editor** - view/edit pixels, palettes, and CLUTs; switch BPP;
+  import/export; undo/redo.
+- **VRAM Viewer** - scrollable/zoomable view of the emulated VRAM buffer,
+  with every TIM's image and CLUT drawn as a draggable, snap-to-grid
+  overlay; flags overlaps and framebuffer collisions.
+- **TMD Editor** - shares the same `VRAMManager` as the TIM Editor, so
+  textures resolve identically:
+  - **3D View** - textured/lit preview with per-object placement and an
+    orbit + WASD camera.
+  - **Model Editor** - interactive mesh editing (vertex/edge/face selection,
+    gizmo transforms, extrude/merge/duplicate, normals) plus a UV workspace.
+  - **Raw Editor** - field-level tree view of a model's
+    vertices/normals/primitives with a live 3D preview.
+  - OBJ and glTF import/export (see `docs/ARCHITECTURE.md` for round-trip
+    limits).
+- Independent undo/redo for the TIM and TMD sides.
 
 ## Building
 
-Requirements: CMake 3.15+, a C++17 compiler, OpenGL, and GLFW3. On Linux,
-the native file dialog library (`nfd`) additionally needs GTK3 and Wayland
-client development packages - on Debian/Ubuntu:
-
-```sh
-sudo apt install libglfw3-dev libgtk-3-dev libwayland-dev pkg-config
-```
-
-Clone with submodules (every third-party dependency under `third_party/` is
-vendored as a git submodule - see `docs/ARCHITECTURE.md` for the full list
-and why each one is there):
+Requires CMake 3.15+, a C++17 compiler, OpenGL, and GLFW3.
 
 ```sh
 git clone --recurse-submodules <this repo's URL>
-# or, if you already cloned without it:
+# already cloned without submodules? run:
 git submodule update --init --recursive
 ```
 
-Then configure and build:
+### Linux
 
 ```sh
+sudo apt install libglfw3-dev
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build . -j$(nproc)
 ```
 
-This produces the `TIMEditor` executable in `build/`.
+Produces `build/TIMEditor`.
 
-### Running the tests
+### Windows
 
-The `tests/` suite (registered with CMake's `ctest`) covers the ImGui-free
-`core`/`gfx` layers directly - ray/picking math, mesh-editing operations,
-OBJ/glTF import-export round-tripping, the TMD document's undo/redo, etc.
-It's on by default; disable it with `-DTIMEDITOR_BUILD_TESTS=OFF` if you
-don't want it built.
+GLFW3 isn't vendored, so grab it via
+[vcpkg](https://github.com/microsoft/vcpkg), from a Developer Command Prompt /
+PowerShell:
+
+```powershell
+vcpkg install glfw3:x64-windows
+
+cmake -B build -S . `
+  -DCMAKE_TOOLCHAIN_FILE="<vcpkg-root>/scripts/buildsystems/vcpkg.cmake" `
+  -DVCPKG_TARGET_TRIPLET=x64-windows
+cmake --build build --config Release -j
+
+copy "<vcpkg-root>\installed\x64-windows\bin\glfw3.dll" build\Release\
+```
+
+Produces `build/Release/TIMEditor.exe` (OpenGL itself comes from Windows).
+
+### Tests
 
 ```sh
 cd build
 ctest --output-on-failure
 ```
 
+Disable with `-DTIMEDITOR_BUILD_TESTS=OFF`.
+
 ## Architecture
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the `core`/`gfx`/`ui`
-layering rule, the TIM/TMD document design, coordinate conventions, the
-undo/redo design, and the full vendored-dependency table.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for layering, document
+design, coordinate conventions, undo/redo, and the vendored-dependency
+table.

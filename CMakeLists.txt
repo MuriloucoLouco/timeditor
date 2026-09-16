@@ -14,6 +14,7 @@ set(TINYGLTF_DIR ${CMAKE_SOURCE_DIR}/third_party/tinygltf)
 set(IMGUIZMO_DIR ${CMAKE_SOURCE_DIR}/third_party/ImGuizmo/src) # tag 1.10+ moved ImGuizmo.h/.cpp under src/
 set(FONTS_DIR ${CMAKE_SOURCE_DIR}/third_party/fonts)
 set(ICONFONTCPPHEADERS_DIR ${CMAKE_SOURCE_DIR}/third_party/IconFontCppHeaders)
+set(TINYFILEDIALOGS_DIR ${CMAKE_SOURCE_DIR}/third_party/tinyfiledialogs)
 
 # Core ImGui only (no demo, no backends) - what a headless target (like
 # tests/test_fonts.cpp, which just builds a font atlas) needs; the full app
@@ -40,6 +41,7 @@ include_directories(
     ${IMGUIZMO_DIR}
     ${FONTS_DIR}
     ${ICONFONTCPPHEADERS_DIR}
+    ${TINYFILEDIALOGS_DIR}
 )
 
 # ImGuizmo expects ImVec2 +/-/* operators, which ImGui only declares when
@@ -48,8 +50,6 @@ include_directories(
 # included in that translation unit, before imgui.h's own #pragma once
 # guard locks in whether those operators got declared.
 add_compile_definitions(IMGUI_DEFINE_MATH_OPERATORS)
-
-add_subdirectory(third_party/nfd)
 
 # Everything below src/ui (the file formats, mesh-editing ops, GL rendering,
 # and OBJ/glTF import-export) has no ImGui dependency - see
@@ -110,9 +110,16 @@ add_executable(TIMEditor
     src/ui/model_export_dialog.cpp
     src/ui/model_import_dialog.cpp
     ${IMGUI_SOURCES}
+    ${TINYFILEDIALOGS_DIR}/tinyfiledialogs.c
 )
 
-target_link_libraries(TIMEditor PRIVATE TIMEditorCore glfw OpenGL::GL nfd)
+target_link_libraries(TIMEditor PRIVATE TIMEditorCore glfw OpenGL::GL)
+if(WIN32)
+    # tinyfiledialogs' Win32 backend calls the common-dialog and shell APIs
+    # directly, with no #pragma comment(lib, ...) of its own to pull these
+    # in - both ship with every Windows SDK, no vcpkg package needed.
+    target_link_libraries(TIMEditor PRIVATE comdlg32 shell32)
+endif()
 
 option(TIMEDITOR_BUILD_TESTS "Build the tests/ suite (ctest)" ON)
 if(TIMEDITOR_BUILD_TESTS)

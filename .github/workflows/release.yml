@@ -45,10 +45,10 @@ jobs:
         run: ctest -C Release --output-on-failure
 
       # TIMEditor.exe is the only thing this repo's own build produces that
-      # needs shipping - nfd/imgui/stb/tinygltf/ImGuizmo are all compiled
-      # directly into it (see CMakeLists.txt). glfw3.dll (vcpkg's dynamic
-      # triplet) is the one runtime dependency that has to travel alongside
-      # it; OpenGL (opengl32.dll) is part of Windows itself.
+      # needs shipping - tinyfiledialogs/imgui/stb/tinygltf/ImGuizmo are all
+      # compiled directly into it (see CMakeLists.txt). glfw3.dll (vcpkg's
+      # dynamic triplet) is the one runtime dependency that has to travel
+      # alongside it; OpenGL (opengl32.dll) is part of Windows itself.
       - name: Package
         run: |
           $dist = "dist/TIMEditor-windows-x64"
@@ -72,12 +72,13 @@ jobs:
         with:
           submodules: recursive
 
-      # Matches the README's own build instructions - GLFW3 plus what nfd's
-      # GTK3 file-dialog backend needs.
+      # Matches the README's own build instructions - GLFW3 is the only
+      # system package needed (tinyfiledialogs, the file-dialog backend,
+      # needs no dev packages to build).
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libglfw3-dev libgtk-3-dev libwayland-dev pkg-config
+          sudo apt-get install -y libglfw3-dev
 
       - name: Configure
         run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DTIMEDITOR_BUILD_TESTS=ON
